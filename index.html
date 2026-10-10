@@ -2,30 +2,285 @@
 <html lang="uk">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Сімейний Бюджет</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f1f4f8">
+  <meta name="description" content="MoneyFlow — сімейний бюджет на Google Таблиці">
+  <title>MoneyFlow — Сімейний Бюджет</title>
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💸</text></svg>">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/layout.css">
+  <link rel="stylesheet" href="assets/css/components.css">
 </head>
+
 <body>
-  <div class="card">
-    <h2>Додати витрату</h2>
+  <!-- ── Екран входу: код доступу окремого користувача ───────────────────── -->
+  <div class="gate" id="accessGate" hidden>
+    <form class="gate__card" id="accessGateForm" autocomplete="off">
+      <div class="gate__icon" aria-hidden="true">🔒</div>
+      <h1 class="gate__title">Вхід у бюджет</h1>
+      <p class="gate__hint">Введіть свій код доступу — під ним ви будете записувати витрати.</p>
 
-    <label>Сума (грн)</label>
-    <input type="number" id="amount" placeholder="0" step="1">
+      <label class="field">
+        <span class="field__label">Код доступу</span>
+        <input class="field__input" type="password" id="accessTokenInput"
+               placeholder="••••••••" autocomplete="current-password" required>
+      </label>
 
-    <label>Категорія</label>
-    <select id="category">
-      <option value="Продукти">Продукти</option>
-      <option value="Кафе/Ресторани">Кафе/Ресторани</option>
-      <option value="Авто">Авто</option>
-      <option value="Дім/Комуналка">Дім/Комуналка</option>
-      <option value="Інше">Інше</option>
-    </select>
-
-    <button id="sendBtn" onclick="submitData()">Зберегти</button>
-    <div id="status"></div>
+      <p class="gate__error" id="accessGateError" role="alert" hidden></p>
+      <button class="button button--primary button--block" type="submit" id="accessGateSubmit">
+        Увійти
+      </button>
+      <p class="gate__countdown" id="accessGateCountdown" hidden></p>
+      <p class="gate__footnote">Код задається в аркуші <code>Users</code> таблиці.</p>
+    </form>
   </div>
 
-  <script src="app.js"></script>
+  <!-- ── Застосунок ─────────────────────────────────────────────────────── -->
+  <div class="app" id="app" hidden>
+
+    <header class="app-header">
+      <div class="app-header__brand">
+        <span class="app-header__logo" aria-hidden="true">💸</span>
+        <span class="app-header__title">MoneyFlow</span>
+      </div>
+
+      <div class="period-switcher">
+        <button class="icon-button" id="periodPrevButton" type="button" aria-label="Попередній місяць">‹</button>
+        <span class="period-switcher__label" id="periodLabel" aria-live="polite">—</span>
+        <button class="icon-button" id="periodNextButton" type="button" aria-label="Наступний місяць">›</button>
+      </div>
+
+      <div class="app-header__actions">
+        <button class="sync-indicator" id="syncIndicator" type="button"
+                data-state="loading" title="Перевірити синхронізацію">
+          <span class="sync-indicator__dot" aria-hidden="true"></span>
+          <span class="sync-indicator__text">Завантаження…</span>
+        </button>
+
+        <button class="profile-chip" id="profileChip" type="button" title="Змінити користувача">
+          <span class="profile-chip__avatar" id="profileAvatar" aria-hidden="true">—</span>
+          <span class="profile-chip__name" id="profileName">—</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Таби показуються лише на вузьких екранах; на широких усі
+         картки й так поміщаються в дві колонки. -->
+    <nav class="view-tabs" id="viewTabs" role="tablist" aria-label="Розділи бюджету">
+      <button class="view-tabs__tab is-active" type="button" role="tab" data-view="entry" aria-selected="true">
+        <span aria-hidden="true">✏️</span> Ввід
+      </button>
+      <button class="view-tabs__tab" type="button" role="tab" data-view="overview" aria-selected="false">
+        <span aria-hidden="true">📊</span> Підсумки
+      </button>
+      <button class="view-tabs__tab" type="button" role="tab" data-view="budget" aria-selected="false">
+        <span aria-hidden="true">🎯</span> Ліміти
+      </button>
+      <button class="view-tabs__tab" type="button" role="tab" data-view="history" aria-selected="false">
+        <span aria-hidden="true">🧾</span> Історія
+      </button>
+    </nav>
+
+    <main class="app-main" id="appMain" data-active-view="entry">
+
+      <!-- ── Ліва колонка: ввід операції ──────────────────────────────── -->
+      <section class="column column--entry" data-panel="entry">
+        <form class="card entry-card" id="entryForm" novalidate>
+
+          <div class="segmented" role="radiogroup" aria-label="Тип операції" data-active-kind="expense">
+            <button class="segmented__option is-active" type="button"
+                    id="kindExpenseButton" data-kind="expense" role="radio" aria-checked="true">
+              Витрата
+            </button>
+            <button class="segmented__option" type="button"
+                    id="kindIncomeButton" data-kind="income" role="radio" aria-checked="false">
+              Дохід
+            </button>
+            <span class="segmented__thumb" aria-hidden="true"></span>
+          </div>
+
+          <div class="field field--amount">
+            <label class="field__label" for="entryAmountInput">Сума, ₴</label>
+
+            <div class="amount-editor">
+              <input class="field__input field__input--amount" type="text" inputmode="decimal"
+                     id="entryAmountInput" placeholder="0" autocomplete="off"
+                     aria-describedby="amountPreview" required>
+
+              <div class="amount-editor__tools">
+                <button class="amount-tool" id="entryAmountAddButton" type="button"
+                        title="Додати ще одну суму" aria-label="Додати знак плюс">+</button>
+                <button class="amount-tool" id="entryAmountClearButton" type="button"
+                        title="Очистити" aria-label="Очистити поле суми">×</button>
+              </div>
+            </div>
+
+            <p class="amount-preview" id="amountPreview" aria-live="polite" hidden></p>
+            <p class="field__error" id="entryAmountError" hidden></p>
+
+            <p class="field__hint">
+              Можна писати вираз: <code>120+80+50</code> або <code>1250/2</code>
+            </p>
+          </div>
+
+          <fieldset class="category-field">
+            <legend class="field__label">Категорія</legend>
+            <div class="chip-grid" id="categoryChips" role="radiogroup" aria-label="Категорія"></div>
+            <p class="field__error" id="entryCategoryError" hidden></p>
+          </fieldset>
+
+          <label class="field">
+            <span class="field__label">Дата</span>
+            <input class="field__input" type="date" id="entryDateInput" required>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Нотатка <em class="field__optional">необов'язково</em></span>
+            <input class="field__input" type="text" id="entryNoteInput"
+                   placeholder="напр. АТБ, бензин" maxlength="120" autocomplete="off">
+          </label>
+
+          <button class="button button--primary button--block" type="submit" id="entrySubmitButton">
+            Зберегти витрату
+          </button>
+
+          <p class="entry-card__status" id="entryStatus" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <!-- ── Права колонка: аналітика ────────────────────────────────── -->
+      <section class="column column--insights">
+
+        <article class="card card--collapsible" id="overviewPanel" data-panel="overview"
+                 data-collapse-key="overview" data-collapsed="false">
+          <button class="card__header card__header--button" type="button"
+                  aria-expanded="true" aria-controls="overviewPanelBody">
+            <h2 class="card__title">Підсумки за місяць</h2>
+            <span class="card__collapse-icon" aria-hidden="true"></span>
+          </button>
+
+          <div class="card__body" id="overviewPanelBody">
+            <div class="card__body-inner">
+
+              <div class="balance-block">
+                <span class="balance-block__label">Залишок</span>
+                <span class="balance-block__value" id="balanceValue">—</span>
+                <span class="balance-block__meta" id="balanceMeta"></span>
+              </div>
+
+              <div class="metric-grid">
+                <div class="metric metric--expense">
+                  <span class="metric__label">Витрати</span>
+                  <span class="metric__value" id="expenseTotalValue">—</span>
+                </div>
+                <div class="metric metric--income">
+                  <span class="metric__label">Доходи</span>
+                  <span class="metric__value" id="incomeTotalValue">—</span>
+                </div>
+              </div>
+
+              <dl class="fact-list">
+                <div class="fact">
+                  <dt>У середньому на день</dt>
+                  <dd id="dailyAverageValue">—</dd>
+                </div>
+                <div class="fact">
+                  <dt>Прогноз на кінець місяця</dt>
+                  <dd id="projectionValue">—</dd>
+                </div>
+                <div class="fact">
+                  <dt>У порівнянні з минулим</dt>
+                  <dd id="monthOverMonthValue">—</dd>
+                </div>
+              </dl>
+
+              <div class="donut-block" id="donutBlock" hidden>
+                <div class="donut" id="categoryDonut" role="img" aria-label="Структура витрат"></div>
+                <ul class="legend" id="categoryLegend"></ul>
+              </div>
+
+            </div>
+          </div>
+        </article>
+
+        <article class="card card--collapsible" id="budgetPanel" data-panel="budget"
+                 data-collapse-key="budget" data-collapsed="false">
+          <button class="card__header card__header--button" type="button"
+                  aria-expanded="true" aria-controls="budgetPanelBody">
+            <h2 class="card__title">Ліміти по категоріях</h2>
+            <span class="card__header-side">
+              <span class="card__badge" id="budgetRemainingBadge">—</span>
+              <span class="card__collapse-icon" aria-hidden="true"></span>
+            </span>
+          </button>
+
+          <div class="card__body" id="budgetPanelBody">
+            <div class="card__body-inner">
+              <div class="budget-list" id="budgetPanelList"></div>
+              <p class="card__empty" id="budgetEmptyMessage" hidden>
+                Ліміти ще не задані. Відкрийте аркуш <code>Categories</code> у таблиці
+                і заповніть стовпець «Ліміт, ₴».
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card card--collapsible" id="historyPanel" data-panel="history"
+                 data-collapse-key="history" data-collapsed="false">
+          <button class="card__header card__header--button" type="button"
+                  aria-expanded="true" aria-controls="historyPanelBody">
+            <h2 class="card__title">Останні операції</h2>
+            <span class="card__header-side">
+              <span class="card__badge card__badge--muted" id="historyCountBadge">—</span>
+              <span class="card__collapse-icon" aria-hidden="true"></span>
+            </span>
+          </button>
+
+          <div class="card__body" id="historyPanelBody">
+            <div class="card__body-inner">
+              <ul class="transaction-list" id="transactionList"></ul>
+              <p class="card__empty" id="transactionListEmpty" hidden>За цей місяць ще немає операцій.</p>
+            </div>
+          </div>
+        </article>
+
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span id="lastSyncLabel">—</span>
+      <button class="link-button" id="logoutButton" type="button">Вийти</button>
+    </footer>
+  </div>
+
+  <!-- ── Середовище не налаштовано ──────────────────────────────────────── -->
+  <div class="gate" id="unconfiguredGate" hidden>
+    <div class="gate__card">
+      <div class="gate__icon" aria-hidden="true">⚙️</div>
+      <h1 class="gate__title">Не вказано адресу бекенда</h1>
+      <p class="gate__hint">
+        Файл <code>assets/js/generated/env.js</code> відсутній — сервер не знає,
+        з якою таблицею працювати.
+      </p>
+      <p class="gate__footnote">
+        Локально: створіть <code>tools/local-endpoint.txt</code> з адресою Web App
+        і перезапустіть <code>start.cmd</code>.
+        На GitHub: додайте секрет <code>APPS_SCRIPT_ENDPOINT</code> у налаштуваннях репозиторію.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Спливаючі повідомлення ─────────────────────────────────────────── -->
+  <div class="toast-host" id="toastHost" aria-live="polite" aria-atomic="false"></div>
+
+  <!--
+    Файл середовища: адреса бекенда підставляється сюди під час
+    локального запуску або на GitHub Actions. Його немає в git,
+    тому підключається звичайним script, а не модулем: відсутність
+    файлу не має зупинити весь застосунок.
+  -->
+  <script src="assets/js/generated/env.js"></script>
+  <script type="module" src="assets/js/main.js"></script>
 </body>
 </html>

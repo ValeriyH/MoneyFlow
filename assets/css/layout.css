@@ -1,0 +1,265 @@
+/* ==========================================================================
+   layout.css — сітка застосунку, колонки, шапка, підвал
+   ========================================================================== */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+
+/* ── Шапка ──────────────────────────────────────────────────────────────── */
+
+.app-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.app-header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app-header__logo {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.app-header__title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Таби розділів (лише на вузьких екранах) ─────────────────────────── */
+
+.view-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.view-tabs__tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-md) - 3px);
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.view-tabs__tab.is-active {
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+}
+
+.app-header__title {
+  display: none;
+}
+
+/* ── Перемикач місяців ─────────────────────────────────────────────────── */
+
+.period-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.period-switcher__label {
+  min-width: 108px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ── Основна сітка ─────────────────────────────────────────────────────── */
+
+.app-main {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.column--entry {
+  position: sticky;
+  top: var(--space-4);
+}
+
+/* ── Підвал ────────────────────────────────────────────────────────────── */
+
+.app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-1);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Екран блокування ──────────────────────────────────────────────────── */
+
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-4);
+}
+
+.gate__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: 380px;
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  text-align: left;
+}
+
+.gate__icon {
+  font-size: 32px;
+  text-align: center;
+}
+
+.gate__title {
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.02em;
+}
+
+.gate__hint {
+  margin-bottom: var(--space-2);
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.gate__error {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-expense);
+}
+
+/* Зворотний відлік блокування після серії невдалих спроб. */
+.gate__countdown {
+  padding: 10px 12px;
+  font-family: var(--font-numeric);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+/* ── Сповіщення ────────────────────────────────────────────────────────── */
+
+.toast-host {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-2);
+  width: min(420px, calc(100vw - var(--space-4) * 2));
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* ── Адаптив ───────────────────────────────────────────────────────────── */
+
+@media (min-width: 900px) {
+  .app-main {
+    grid-template-columns: minmax(320px, 380px) 1fr;
+    gap: var(--space-5);
+  }
+
+  /* На широкому екрані все поміщається у дві колонки — таби зайві. */
+  .view-tabs {
+    display: none;
+  }
+}
+
+@media (max-width: 899px) {
+  /* Показуємо лише активну картку: скролити сторінку не доводиться. */
+  .app-main[data-active-view="entry"]    [data-panel]:not([data-panel="entry"]),
+  .app-main[data-active-view="overview"] [data-panel]:not([data-panel="overview"]),
+  .app-main[data-active-view="budget"]   [data-panel]:not([data-panel="budget"]),
+  .app-main[data-active-view="history"]  [data-panel]:not([data-panel="history"]) {
+    display: none;
+  }
+}
+
+@media (min-width: 640px) {
+  .app {
+    padding: var(--space-5) var(--space-5) var(--space-6);
+  }
+
+  .app-header__title {
+    display: inline;
+  }
+}
+
+@media (max-width: 480px) {
+  .app {
+    padding: var(--space-3) var(--space-3) var(--space-6);
+    gap: var(--space-4);
+  }
+
+  .column--entry {
+    position: static;
+  }
+
+  /* Текст індикатора займає місце — на вузькому екрані лишається крапка. */
+  .sync-indicator__text {
+    display: none;
+  }
+
+  .sync-indicator {
+    padding: 8px;
+  }
+
+  .profile-chip__name {
+    display: none;
+  }
+}

@@ -1,0 +1,65 @@
+name: Deploy to GitHub Pages
+
+# Адреса Google Apps Script НЕ живе в репозиторії. Секрет
+# APPS_SCRIPT_ENDPOINT зберігається тут: Settings -> Secrets and
+# variables -> Actions -> New repository secret.
+#
+# Що це дає і чого ні:
+#   URL не потрапить у git-історію       - так
+#   URL не видно в самому репозиторії    - так
+#   URL не видно на сторінці github.io  - ні, там лежить зібраний env.js
+# Тобто це обфускація від випадкового подиву, а не захист.
+# Справжній секрет - коди доступу в таблиці Users.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build environment file from secret
+        env:
+          APPS_SCRIPT_ENDPOINT: ${{ secrets.APPS_SCRIPT_ENDPOINT }}
+        run: |
+          set -eu
+          mkdir -p assets/js/generated
+
+          if [ -z "${APPS_SCRIPT_ENDPOINT}" ]; then
+            echo "::error::Secret APPS_SCRIPT_ENDPOINT is not set. Add it in repo settings."
+            exit 1
+          fi
+
+          printf 'window.__MONEYFLOW_ENV__ = { APPS_SCRIPT_ENDPOINT: "%s" };\n' \
+            "$APPS_SCRIPT_ENDPOINT" > assets/js/generated/env.js
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

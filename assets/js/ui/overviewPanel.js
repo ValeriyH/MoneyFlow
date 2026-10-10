@@ -1,0 +1,208 @@
+/**
+ * overviewPanel.js — підсумки місяця: баланс, витрати, доходи,
+ * середні за день, прогноз і динаміка до попереднього місяця,
+ * а також кільцевий розподіл витрат по категоріях.
+ */
+
+import {
+  describeChangeRate,
+  formatCompactCurrency,
+  formatCurrency,
+  formatPercentage,
+} from "../domain/formatters.js";
+import { buildPeriodSummary } from "../domain/statistics.js";
+import { clearChildren, createElement, findById, setVisibility } from "./dom.js";
+
+/** Скільки категорій показувати в легенді — решта йде в «та ще N». */
+const LEGEND_CATEGORY_LIMIT = 6;
+
+export function initOverviewPanel() {
+  const balanceValueElement = findById("balanceValue");
+  const balanceMetaElement = findById("balanceMeta");
+  const expenseTotalValueElement = findById("expenseTotalValue");
+  const incomeTotalValueElement = findById("incomeTotalValue");
+  const dailyAverageValueElement = findById("dailyAverageValue");
+  const projectionValueElement = findById("projectionValue");
+  const monthOverMonthValueElement = findById("monthOverMonthValue");
+
+  const donutBlockElement = findById("donutBlock");
+  const donutElement = findById("categoryDonut");
+  const legendElement = findById("categoryLegend");
+
+  /**
+   * @param {Readonly<object>} state
+   * @param {string} periodKey
+   * @param {Date} referenceDate
+   */
+  function render(state, periodKey, referenceDate) {
+    const summary = buildPeriodSummary(
+      state.transactions,
+      state.categories,
+      periodKey,
+      referenceDate,
+    );
+
+    renderBalance(summary);
+    renderTotals(summary);
+    renderFacts(summary);
+    renderCategoryDonut(summary);
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderBalance(summary) {
+    balanceValueElement.textContent = formatCurrency(summary.balance);
+    balanceValueElement.dataset.tone = summary.balance >= 0 ? "positive" : "negative";
+
+    balanceMetaElement.textContent =
+      summary.transactionCount === 0
+        ? "Операцій за цей місяць ще немає"
+        : `${summary.transactionCount} операцій за цей місяць`;
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderTotals(summary) {
+    expenseTotalValueElement.textContent = formatCurrency(summary.expenseTotal);
+    incomeTotalValueElement.textContent = formatCurrency(summary.incomeTotal);
+  }
+
+  /**
+   * @param {ReturnType<typeof buildPeriodSummary>} summary
+   */
+  function renderFacts(summary) {
+    dailyAverageValueElement.textContent = formatCurrency(summary.dailyAverageExpense);
+
+    renderProjection(summary);
+    renderMonthOverMonth(summary);
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderProjection(summary) {
+    if (summary.expenseTotal === 0) {
+      projectionValueElement.textContent = "—";
+      delete projectionValueElement.dataset.tone;
+      return;
+    }
+
+    projectionValueElement.textContent = formatCurrency(summary.projectedExpenseTotal);
+
+    // Порівнюємо прогноз не з уже витраченим (це завжди більше),
+    // а з минулим місяцем — це і є змістовним сигналом.
+    const isProjectedWorseThanLastMonth =
+      summary.previousPeriodExpenseTotal > 0 &&
+      summary.projectedExpenseTotal > summary.previousPeriodExpenseTotal;
+
+    projectionValueElement.dataset.tone = isProjectedWorseThanLastMonth ? "negative" : "positive";
+    projectionValueElement.title = isProjectedWorseThanLastMonth
+      ? "За поточним темпом місяць закриється дорожче, ніж минулий"
+      : "За поточним темпом місяць закриється дешевше, ніж минулий";
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderMonthOverMonth(summary) {
+    const expenseChange = describeChangeRate(
+      summary.expenseTotal,
+      summary.previousPeriodExpenseTotal,
+    );
+
+    if (!expenseChange.hasBaseline) {
+      monthOverMonthValueElement.textContent = "немає бази для порівняння";
+      delete monthOverMonthValueElement.dataset.tone;
+      return;
+    }
+
+    if (expenseChange.percent === 0) {
+      monthOverMonthValueElement.textContent = "без змін";
+      delete monthOverMonthValueElement.dataset.tone;
+      return;
+    }
+
+    monthOverMonthValueElement.textContent =
+      `${expenseChange.percent > 0 ? "+" : "−"}${formatPercentage(Math.abs(expenseChange.percent))}`;
+
+    monthOverMonthValueElement.dataset.tone = expenseChange.tone;
+    monthOverMonthValueElement.title =
+      expenseChange.tone === "negative"
+        ? "Витрати вище, ніж минулого місяця"
+        : "Витрати нижче, ніж минулого місяця";
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderCategoryDonut(summary) {
+    const { categoryBreakdown } = summary;
+
+    if (categoryBreakdown.length === 0) {
+      setVisibility(donutBlockElement, false);
+      return;
+    }
+
+    setVisibility(donutBlockElement, true);
+    donutElement.style.background = buildDonutGradient(categoryBreakdown);
+
+    clearChildren(legendElement);
+
+    const leadingCategories = categoryBreakdown.slice(0, LEGEND_CATEGORY_LIMIT);
+    for (const categoryShare of leadingCategories) {
+      legendElement.append(createLegendItem(categoryShare));
+    }
+
+    const hiddenShareTotal = categoryBreakdown
+      .slice(LEGEND_CATEGORY_LIMIT)
+      .reduce((sum, category) => sum + category.share, 0);
+
+    if (hiddenShareTotal > 0) {
+      legendElement.append(
+        createElement("li", {
+          className: "legend__item",
+          textContent: `та ще ${categoryBreakdown.length - LEGEND_CATEGORY_LIMIT} · ${formatPercentage(hiddenShareTotal)}`,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Кільце з секторів через conic-gradient — без зовнішніх бібліотек.
+   * @param {Array<{ color: string, share: number }>} categoryBreakdown
+   * @returns {string} значення CSS-властивості background
+   */
+  function buildDonutGradient(categoryBreakdown) {
+    const gradientStops = [];
+    let accumulatedShare = 0;
+
+    for (const categoryShare of categoryBreakdown) {
+      const startPercent = accumulatedShare * 100;
+      accumulatedShare += categoryShare.share;
+      const endPercent = accumulatedShare * 100;
+      gradientStops.push(`${categoryShare.color} ${startPercent}% ${endPercent}%`);
+    }
+
+    return `conic-gradient(${gradientStops.join(", ")})`;
+  }
+
+  /**
+   * @param {{ name: string, color: string, total: number, share: number }} categoryShare
+   * @returns {HTMLElement}
+   */
+  function createLegendItem(categoryShare) {
+    const legendItemElement = createElement("li", { className: "legend__item" });
+
+    legendItemElement.append(
+      createElement("span", {
+        className: "legend__swatch",
+        attributes: { style: `background-color: ${categoryShare.color}` },
+      }),
+      createElement("span", { className: "legend__name", textContent: categoryShare.name }),
+      createElement("span", {
+        className: "legend__value",
+        textContent: formatCompactCurrency(categoryShare.total),
+      }),
+      createElement("span", {
+        className: "legend__share",
+        textContent: formatPercentage(categoryShare.share),
+      }),
+    );
+
+    return legendItemElement;
+  }
+
+  return { render };
+}

@@ -1,0 +1,959 @@
+/* ==========================================================================
+   components.css — картки, поля, кнопки, індикатори, графіки
+   ========================================================================== */
+
+/* ── Картка ─────────────────────────────────────────────────────────────── */
+
+.card {
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* ── Картка ─────────────────────────────────────────────────────────────── */
+
+.card {
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* Згортання працює лише на широких екранах: на вузьких показується
+   рівно одна картка за раз і згортати просто нема чого. */
+@media (min-width: 900px) {
+  .card--collapsible[data-collapsed="true"] .card__body {
+    grid-template-rows: 0fr;
+  }
+
+  .card--collapsible[data-collapsed="true"] .card__header {
+    margin-bottom: 0;
+  }
+
+  .card--collapsible[data-collapsed="true"] .card__collapse-icon {
+    transform: rotate(-45deg) translate(-2px, -2px);
+  }
+
+  .card--collapsible[data-collapsed="true"] {
+    padding: var(--space-4) var(--space-5);
+  }
+
+  .card__header--button:hover .card__title {
+    color: var(--color-accent-strong);
+  }
+}
+
+@media (max-width: 899px) {
+  .card__collapse-icon {
+    display: none;
+  }
+}
+
+.card__title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  transition: color var(--motion-fast);
+}
+
+.card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.card__header--button {
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+}
+
+.card__header-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Кнопка згортання потрібна лише там, де є що згортати. */
+.card__collapse-icon {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-text-tertiary);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform var(--motion-base);
+}
+
+.card__body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--motion-base);
+}
+
+.card__body-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.card__badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent-strong);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  white-space: nowrap;
+}
+
+.card__badge--muted {
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-muted);
+}
+
+.card__empty {
+  padding: var(--space-3) 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+/* ── Поля вводу ─────────────────────────────────────────────────────────── */
+
+.field {
+  display: block;
+}
+
+.field + .field {
+  margin-top: var(--space-4);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.field-row .field + .field {
+  margin-top: 0;
+}
+
+.field__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.field__optional {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.field__input {
+  display: block;
+  width: 100%;
+  padding: 11px 13px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.field__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.field__input:hover {
+  border-color: var(--color-border-strong);
+}
+
+.field__input:focus {
+  outline: none;
+  background: var(--color-surface);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.field__input[aria-invalid="true"] {
+  border-color: var(--color-expense);
+}
+
+.field__input[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 3px var(--color-expense-soft);
+}
+
+.field--amount .field__input--amount {
+  padding: 12px 14px;
+  font-family: var(--font-numeric);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-align: right;
+}
+
+.field__hint {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* Приклади виразу «120+80+50» — це не код, а зразок того, що можна
+   ввести. Синій з підкладкою читається як посилання, тому лишаємо
+   тільки моношрифт і курсив, а колір успадковуємо від підказки. */
+.field__hint code {
+  padding: 0;
+  font-size: inherit;
+  font-style: italic;
+  color: inherit;
+  background: none;
+  border-radius: 0;
+}
+
+/* ── Редактор суми ──────────────────────────────────────────────────────── */
+
+.amount-editor {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.amount-editor .field__input--amount {
+  flex: 1;
+  min-width: 0;
+}
+
+.amount-editor__tools {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: var(--space-1);
+  width: 44px;
+}
+
+.amount-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.amount-tool:hover:not(:disabled) {
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+}
+
+.amount-tool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Рядок, що з'являється лише коли введено вираз, а не одне число. */
+.amount-preview {
+  margin-top: var(--space-2);
+  padding: 7px 12px;
+  font-family: var(--font-numeric);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-accent-strong);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+  text-align: right;
+}
+
+.amount-preview[data-tone="hint"] {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-muted);
+}
+
+.field__error {
+  margin-top: var(--space-2);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-expense);
+}
+
+select.field__input {
+  appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%235a6478' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 10px;
+}
+
+/* ── Перемикач типу операції ───────────────────────────────────────────── */
+
+.segmented {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 4px;
+  margin-bottom: var(--space-5);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.segmented__option {
+  position: relative;
+  z-index: 1;
+  padding: 9px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-md) - 4px);
+  transition: color var(--motion-fast);
+}
+
+.segmented__option.is-active {
+  color: var(--color-text-primary);
+}
+
+.segmented__thumb {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 6px);
+  background: var(--color-surface);
+  border-radius: calc(var(--radius-md) - 4px);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+  transition: transform var(--motion-base);
+}
+
+.segmented[data-active-kind="income"] .segmented__thumb {
+  transform: translateX(calc(100% + 4px));
+}
+
+/* ── Профіль користувача ────────────────────────────────────────────────── */
+
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 4px 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  transition: box-shadow var(--motion-fast);
+}
+
+.profile-chip:hover {
+  box-shadow: var(--shadow-card);
+}
+
+.profile-chip__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  border-radius: 50%;
+}
+
+.profile-chip__name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Категорії (чіпси) ─────────────────────────────────────────────────── */
+
+.category-field {
+  margin: var(--space-5) 0 0;
+  padding: 0;
+  border: none;
+}
+
+.chip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  background: var(--color-surface-muted);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.chip__icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Назву категорії краще перенести на другий рядок, ніж обрізати:
+   «Дім/Комуналка» має лишатися читабельною на телефоні. */
+.chip__label {
+  overflow-wrap: anywhere;
+}
+
+.chip:hover {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+}
+
+.chip.is-selected {
+  font-weight: 600;
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+/* ── Кнопки ────────────────────────────────────────────────────────────── */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 13px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-fast), transform var(--motion-fast),
+              opacity var(--motion-fast);
+}
+
+.button:active {
+  transform: scale(0.985);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button--primary {
+  color: var(--color-text-inverse);
+  background: var(--color-accent);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+}
+
+.button--danger {
+  color: var(--color-text-inverse);
+  background: var(--color-expense);
+}
+
+.button--block {
+  width: 100%;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+
+.icon-button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-muted);
+}
+
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.link-button {
+  padding: 0;
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  background: none;
+  border: none;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  color: var(--color-expense);
+}
+
+/* ── Статус форми ──────────────────────────────────────────────────────── */
+
+.entry-card__status {
+  min-height: 20px;
+  margin-top: var(--space-3);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.entry-card__status[data-tone="success"] { color: var(--color-income); }
+.entry-card__status[data-tone="error"]   { color: var(--color-expense); }
+.entry-card__status[data-tone="warning"] { color: var(--color-warning); }
+.entry-card__status[data-tone="pending"] { color: var(--color-text-secondary); }
+
+/* ── Індикатор синхронізації ───────────────────────────────────────────── */
+
+.sync-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 190px;
+  padding: 7px 12px 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  transition: box-shadow var(--motion-fast);
+}
+
+.sync-indicator__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-indicator__dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-text-tertiary);
+  border-radius: 50%;
+}
+
+.sync-indicator[data-state="synced"]  { color: var(--color-income); }
+.sync-indicator[data-state="synced"] .sync-indicator__dot {
+  background: var(--color-income);
+}
+
+.sync-indicator[data-state="pending"] { color: var(--color-warning); }
+.sync-indicator[data-state="pending"] .sync-indicator__dot {
+  background: var(--color-warning);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.sync-indicator[data-state="synced"] .sync-indicator__dot,
+.sync-indicator[data-state="pending"] .sync-indicator__dot {
+  background: currentColor;
+}
+
+.sync-indicator[data-state="error"],
+.sync-indicator[data-state="offline"] { color: var(--color-expense); }
+.sync-indicator[data-state="error"] .sync-indicator__dot,
+.sync-indicator[data-state="offline"] .sync-indicator__dot {
+  background: var(--color-expense);
+}
+
+.sync-indicator[data-state="loading"] .sync-indicator__dot {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* ── Підсумки ──────────────────────────────────────────────────────────── */
+
+.balance-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4);
+  margin-top: var(--space-4);
+  background: linear-gradient(135deg, var(--color-accent-soft), #f5f8ff);
+  border-radius: var(--radius-md);
+}
+
+.balance-block__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.balance-block__value {
+  font-family: var(--font-numeric);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.balance-block__value[data-tone="positive"] { color: var(--color-income); }
+.balance-block__value[data-tone="negative"] { color: var(--color-expense); }
+
+.balance-block__meta {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.metric__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.metric__value {
+  font-family: var(--font-numeric);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.metric--expense .metric__value { color: var(--color-expense); }
+.metric--income .metric__value  { color: var(--color-income); }
+
+.fact-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.fact dt {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.fact dd {
+  font-family: var(--font-numeric);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.fact dd[data-tone="positive"] { color: var(--color-income); }
+.fact dd[data-tone="negative"] { color: var(--color-expense); }
+
+/* ── Кільцевий графік ───────────────────────────────────────────────────── */
+
+.donut-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.donut {
+  position: relative;
+  flex-shrink: 0;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: var(--color-surface-muted);
+}
+
+.donut::after {
+  content: "";
+  position: absolute;
+  inset: 27%;
+  background: var(--color-surface);
+  border-radius: 50%;
+}
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.legend__swatch {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.legend__value {
+  margin-left: auto;
+  font-family: var(--font-numeric);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.legend__share {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+/* ── Ліміти ────────────────────────────────────────────────────────────── */
+
+.budget-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.budget-item {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.budget-item__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 14px;
+}
+
+.budget-item__dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  align-self: center;
+  border-radius: 3px;
+}
+
+.budget-item__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.budget-item__amounts {
+  margin-left: auto;
+  font-family: var(--font-numeric);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.budget-item__amounts strong {
+  font-weight: 700;
+}
+
+.budget-item__track {
+  position: relative;
+  height: 9px;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.budget-item__fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width var(--motion-base);
+}
+
+.budget-item[data-status="safe"] .budget-item__fill { background: var(--color-income); }
+.budget-item[data-status="warning"] .budget-item__fill { background: var(--color-warning); }
+.budget-item[data-status="exceeded"] .budget-item__fill { background: var(--color-expense); }
+
+.budget-item__note {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.budget-item__note[data-status="warning"] { color: var(--color-warning); }
+.budget-item__note[data-status="exceeded"] { color: var(--color-expense); }
+
+/* ── Список операцій ────────────────────────────────────────────────────── */
+
+.transaction-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.transaction {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 11px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.transaction:last-child {
+  border-bottom: none;
+}
+
+.transaction__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
+.transaction__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.transaction__title,
+.transaction__meta {
+  display: block;
+}
+
+.transaction__title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction__meta {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transaction__amount {
+  font-family: var(--font-numeric);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.transaction__amount[data-kind="income"]  { color: var(--color-income); }
+.transaction__amount[data-kind="expense"] { color: var(--color-text-primary); }
+
+.transaction__delete {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  color: var(--color-text-tertiary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--motion-fast), color var(--motion-fast),
+              background-color var(--motion-fast);
+}
+
+.transaction:hover .transaction__delete,
+.transaction__delete:focus-visible {
+  opacity: 1;
+}
+
+.transaction__delete:hover {
+  color: var(--color-expense);
+  background: var(--color-expense-soft);
+}
+
+.transaction[data-pending="true"] .transaction__title::after {
+  content: "· очікує";
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-warning);
+}
+
+/* ── Сповіщення ────────────────────────────────────────────────────────── */
+
+.toast {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-inverse);
+  background: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+  animation: toast-in var(--motion-base);
+}
+
+.toast[data-tone="success"] { background: var(--color-income); }
+.toast[data-tone="error"]   { background: var(--color-expense); }
+.toast[data-tone="warning"] { background: var(--color-warning); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
