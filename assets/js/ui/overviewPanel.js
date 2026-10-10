@@ -85,16 +85,16 @@ export function initOverviewPanel() {
 
     projectionValueElement.textContent = formatCurrency(summary.projectedExpenseTotal);
 
-    // Порівнюємо прогноз не з уже витраченим (це завжди більше),
-    // а з минулим місяцем — це і є змістовним сигналом.
-    const isProjectedWorseThanLastMonth =
-      summary.previousPeriodExpenseTotal > 0 &&
-      summary.projectedExpenseTotal > summary.previousPeriodExpenseTotal;
+    // Це витрати, а не залишок, - тому завжди червоним, незалежно
+    // від порівняння з минулим місяцем.
+    projectionValueElement.dataset.tone = "negative";
 
-    projectionValueElement.dataset.tone = isProjectedWorseThanLastMonth ? "negative" : "positive";
-    projectionValueElement.title = isProjectedWorseThanLastMonth
-      ? "За поточним темпом місяць закриється дорожче, ніж минулий"
-      : "За поточним темпом місяць закриється дешевше, ніж минулий";
+    // Розбіжність між назвою й цифрою тут була постійною скаргою,
+    // тому в підказці прямо розписано, як число отримано.
+    projectionValueElement.title =
+      `Зараз ${formatCurrency(summary.dailyAverageExpense)} на день.\n` +
+      `Якщо витрачатимете так само весь місяць — ` +
+      `${formatCurrency(summary.projectedExpenseTotal)}.`;
   }
 
   /** @param {ReturnType<typeof buildPeriodSummary>} summary */

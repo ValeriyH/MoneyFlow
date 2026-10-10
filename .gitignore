@@ -5,6 +5,7 @@
 # або з tools/local-endpoint.txt під час локального запуску.
 assets/js/generated/env.js
 tools/local-endpoint.txt
+local-pass.txt
 
 # Справжні коди доступу: живуть у Google Таблиці, але можуть
 # випадково залишитися в нотатках чи скриншотах у робочій гілці.
