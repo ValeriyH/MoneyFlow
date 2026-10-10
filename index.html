@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Сімейний Бюджет</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="card">
+    <h2>Додати витрату</h2>
+
+    <label>Сума (грн)</label>
+    <input type="number" id="amount" placeholder="0" step="1">
+
+    <label>Категорія</label>
+    <select id="category">
+      <option value="Продукти">Продукти</option>
+      <option value="Кафе/Ресторани">Кафе/Ресторани</option>
+      <option value="Авто">Авто</option>
+      <option value="Дім/Комуналка">Дім/Комуналка</option>
+      <option value="Інше">Інше</option>
+    </select>
+
+    <button id="sendBtn" onclick="submitData()">Зберегти</button>
+    <div id="status"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
