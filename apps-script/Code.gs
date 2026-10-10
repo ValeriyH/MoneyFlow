@@ -9,8 +9,7 @@
  * АВТОРИЗАЦІЯ
  * Користувач вводить свій код доступу. Сервер знаходить у аркуші `Users`
  * рядок, у якому хеш цього коду збігається, і бере ім'я звідти.
- * У формі витрати немає поля «Хто» — його заповнює сам сервер,
- * тому підробити не можна навіть із підробленим запитом.
+ * Від цього імені буде заповнюватися таблиця
  *
  * У таблиці зберігається не сам код, а SHA-256(сіль + код).
  * Тому хто має доступ до таблиці — не бачить чужих паролів.
@@ -49,6 +48,7 @@ const HEADER_USER_NAME = 'Ім\'я';
 const HEADER_USER_COLOR = 'Колір';
 const HEADER_USER_SALT = 'Сіль';
 const HEADER_USER_ACCESS_HASH = 'Код доступу';
+const HEADER_USER_ACTIVE = 'Активний';
 
 const KIND_EXPENSE = 'Витрата';
 const KIND_INCOME = 'Дохід';
@@ -78,6 +78,29 @@ const LOCKOUT_DURATION_MINUTES = 15;
 /** Ключ у PropertiesService, де живе лічильник спроб. */
 const ATTEMPT_STATE_KEY = 'moneyflow.loginAttempts';
 
+/* ── Самостійна реєстрація ──────────────────────────────────────────────── */
+
+/**
+ * Будь-хто, хто знає адресу Web App, може надіслати заявку.
+ * Щоб відкрита реєстрація не перетворилася на сміття, ставимо межі:
+ * вони вищі за потреби нормальної сім'ї, але нижі за рівень
+ * «скрипт набиває таблицю».
+ */
+const MAX_TOTAL_USERS = 10;
+const MAX_PENDING_USERS = 3;
+
+/** Мінімальна довжина коду, який обрав собі користувач. */
+const MIN_ACCESS_TOKEN_LENGTH = 10;
+
+const FLAG_ACTIVE = 'Так';
+const FLAG_INACTIVE = 'Ні';
+
+/** Палітра для випадкових аватарок. */
+const USER_AVATAR_COLORS = [
+  '#2563eb', '#db2777', '#0f9d58', '#d97706',
+  '#0891b2', '#7c3aed', '#65a30d', '#4f46e5',
+];
+
 /* ── Точка входу ─────────────────────────────────────────────────────────── */
 
 /**
@@ -91,6 +114,13 @@ const ATTEMPT_STATE_KEY = 'moneyflow.loginAttempts';
 function doPost(request) {
   try {
     const payload = JSON.parse(request.postData.contents);
+
+    // Реєстрація - єдина дія без коду доступу: інакше нікому
+    // не було б сенсу заводити акаунт.
+    if (payload.action === 'requestRegistration') {
+      return respondWithJson(Object.assign({ ok: true }, createPendingUser(payload)));
+    }
+
     const viewer = authenticateUser(payload.accessToken);
 
     switch (payload.action) {
@@ -140,7 +170,7 @@ function buildSnapshot(viewer) {
 /* ── Авторизація ─────────────────────────────────────────────────────────── */
 
 /**
- * @typedef {{ name: string, color: string, salt: string, accessTokenHash: string }} BudgetUser
+ * @typedef {{ name: string, color: string, salt: string, accessTokenHash: string, isActive: boolean }} BudgetUser
  */
 
 /**
@@ -163,16 +193,120 @@ function authenticateUser(providedAccessToken) {
   }
 
   for (const user of users) {
-    if (hashAccessToken(submittedToken, user.salt) === user.accessTokenHash) {
-      clearFailedAttempts();
-      return user;
+    if (hashAccessToken(submittedToken, user.salt) !== user.accessTokenHash) continue;
+
+    // Код правильний, але акаунт ще не увімкнутий. Кажемо прямо,
+    // щоб людина не думала, що ввела неправильний пароль.
+    if (!user.isActive) {
+      throw new RequestError(
+        'Акаунт створено, але ще не активовано. Адміністратор має увімкнути його в таблиці.',
+        'UNAUTHORIZED',
+      );
     }
+
+    clearFailedAttempts();
+    return user;
   }
 
   registerFailedAttempt();
 
   console.warn('Спроба входу з невірним кодом доступу о ' + new Date().toISOString());
   throw new RequestError('Код доступу не підходить', 'UNAUTHORIZED');
+}
+
+/**
+ * Створює заявку на користувача. Пароль ніде не зберігається -
+ * лише SHA-256(сіль + пароль). Аккаунт одразу неактивний: увійти
+ * може тільки той, хто має доступ до таблиці й увімкнув рядок.
+ *
+ * @param {{ name: string, password: string }} payload
+ * @returns {{ name: string, isActive: boolean }}
+ */
+function createPendingUser(payload) {
+  const userName = String(payload.name || '').trim();
+  const userPassword = String(payload.password || '').trim();
+
+  if (userName.length < 2 || userName.length > 40) {
+    throw new RequestError('Ім\'я має бути від 2 до 40 символів', 'BAD_REQUEST');
+  }
+
+  requireStrongAccessToken(userPassword);
+
+  const existingUsers = readUsers();
+
+  if (existingUsers.length >= MAX_TOTAL_USERS) {
+    throw new RequestError('У бюджеті вже достатньо користувачів', 'RATE_LIMITED');
+  }
+
+  const pendingUserCount = existingUsers.filter(function (user) {
+    return !user.isActive;
+  }).length;
+
+  if (pendingUserCount >= MAX_PENDING_USERS) {
+    throw new RequestError(
+      'Уже є заявки в очікуванні. Адміністратор має їх обробити.',
+      'RATE_LIMITED',
+    );
+  }
+
+  const isNameTaken = existingUsers.some(function (user) {
+    return user.name.toLowerCase() === userName.toLowerCase();
+  });
+  if (isNameTaken) {
+    throw new RequestError('Таке ім\'я вже зайняте', 'BAD_REQUEST');
+  }
+
+  const salt = generateSalt();
+
+  getRequiredSheet(SHEET_USERS).appendRow([
+    userName,
+    pickRandomAvatarColor(),
+    salt,
+    hashAccessToken(userPassword, salt),
+    FLAG_INACTIVE,
+  ]);
+
+  console.log('Нова заявка на користувача: ' + userName + ' о ' + new Date().toISOString());
+
+  return { name: userName, isActive: false };
+}
+
+/**
+ * Вмикає або вимикає існуючого користувача.
+ *
+ * Запускається вручну з редактора, але частіше просто правлять
+ * клітинку «Активний» у самій таблиці.
+ *
+ *   setUserActive('Оля', true);
+ *
+ * @param {string} userName
+ * @param {boolean} isActive
+ * @return {string} повідомлення з результатом
+ */
+function setUserActive(userName, isActive) {
+  const trimmedName = String(userName || '').trim();
+  if (trimmedName === '') throw new Error('Потрібне ім\'я');
+
+  const usersSheet = getRequiredSheet(SHEET_USERS);
+  const activeColumnIndex = findColumnIndex(usersSheet, HEADER_USER_ACTIVE);
+
+  if (activeColumnIndex === -1) {
+    throw new Error('В аркуші Users немає стовпця ' + HEADER_USER_ACTIVE);
+  }
+
+  const lastRowIndex = usersSheet.getLastRow();
+  const nameColumnValues = usersSheet
+    .getRange(2, findColumnIndex(usersSheet, HEADER_USER_NAME) + 1, lastRowIndex - 1, 1)
+    .getValues();
+
+  for (let offset = 0; offset < nameColumnValues.length; offset += 1) {
+    if (String(nameColumnValues[offset][0]).trim() !== trimmedName) continue;
+
+    usersSheet.getRange(offset + 2, activeColumnIndex + 1).setValue(isActive ? FLAG_ACTIVE : FLAG_INACTIVE);
+    return 'Користувач «' + trimmedName + '» ' + (isActive ? 'активовано' : 'деактивовано');
+  }
+
+  throw new Error('Користувача «' + trimmedName + '» не знайдено');
 }
 
 /**
@@ -265,8 +399,23 @@ function hashAccessToken(accessToken, salt) {
   return Utilities.base64Encode(digest);
 }
 
-/** @returns {Array<BudgetUser>} */
+/**
+ * @returns {Array<BudgetUser>}
+ */
 function readUsers() {
+  const usersSheet = getRequiredSheet(SHEET_USERS);
+
+  // Без колонки «Активний» не можна зрозуміти, хто вже увімкнений,
+  // а хто лише зареєструвався. Тихорто падаємо одразу й голосно:
+  // краще явна помилка в журналі, ніж пустий вхід у бюджет.
+  if (findColumnIndex(usersSheet, HEADER_USER_ACTIVE) === -1) {
+    throw new RequestError(
+      'В аркуші ' + SHEET_USERS + ' немає стовпця «' + HEADER_USER_ACTIVE +
+      '». Перезапустіть bootstrapSheets або додайте колонку вручну.',
+      'SERVER_ERROR',
+    );
+  }
+
   return readSheetAsRecords(SHEET_USERS)
     .map(function (record) {
       return {
@@ -274,11 +423,58 @@ function readUsers() {
         color: String(record[HEADER_USER_COLOR] || '#2563eb').trim(),
         salt: String(record[HEADER_USER_SALT] || '').trim(),
         accessTokenHash: String(record[HEADER_USER_ACCESS_HASH] || '').trim(),
+        isActive: isTruthyFlag(record[HEADER_USER_ACTIVE]),
       };
     })
     .filter(function (user) {
       return user.name !== '' && user.salt !== '' && user.accessTokenHash !== '';
     });
+}
+
+/**
+ * Вимоги до коду доступу. Застосовуються і до самостійної реєстрації,
+ * і до кодів, які заводить адміністратор - секрет один і той же,
+ * тому правила мають бути однакові.
+ *
+ * @param {string} accessToken
+ */
+function requireStrongAccessToken(accessToken) {
+  if (accessToken.length < MIN_ACCESS_TOKEN_LENGTH) {
+    throw new RequestError(
+      'Пароль має містити щонайменше ' + MIN_ACCESS_TOKEN_LENGTH + ' символів',
+      'BAD_REQUEST',
+    );
+  }
+
+  if (!/[a-z]/.test(accessToken)) {
+    throw new RequestError('Пароль має містити хоча б одну малу літеру', 'BAD_REQUEST');
+  }
+  if (!/[A-Z]/.test(accessToken)) {
+    throw new RequestError('Пароль має містити хоча б одну велику літеру', 'BAD_REQUEST');
+  }
+  if (!/\d/.test(accessToken)) {
+    throw new RequestError('Пароль має містити хоча б одну цифру', 'BAD_REQUEST');
+  }
+}
+
+/**
+ * @param {unknown} rawValue
+ * @returns {boolean}
+ */
+function isTruthyFlag(rawValue) {
+  const normalizedValue = String(rawValue || '').trim().toLowerCase();
+  return ['так', 'yes', 'true', '1', 'y'].indexOf(normalizedValue) !== -1;
+}
+
+/** @returns {string} випадковий рядок із сіллю */
+function generateSalt() {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+}
+
+/** @returns {string} колір аватарки з палітри */
+function pickRandomAvatarColor() {
+  const randomIndex = Math.floor(Math.random() * USER_AVATAR_COLORS.length);
+  return USER_AVATAR_COLORS[randomIndex];
 }
 
 /**
@@ -298,18 +494,21 @@ function registerUser(userName, userColor, userAccessToken) {
   const trimmedName = String(userName || '').trim();
   const trimmedToken = String(userAccessToken || '').trim();
 
-  if (trimmedName === '' || trimmedToken === '') {
-    throw new Error('Потрібні і ім\'я, і код доступу');
+  if (trimmedName === '') {
+    throw new Error('Потрібне ім\'я');
   }
 
+  requireStrongAccessToken(trimmedToken);
+
   const usersSheet = getRequiredSheet(SHEET_USERS);
-  const salt = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  const salt = generateSalt();
 
   usersSheet.appendRow([
     trimmedName,
-    String(userColor || '#2563eb').trim(),
+    String(userColor || pickRandomAvatarColor()).trim(),
     salt,
     hashAccessToken(trimmedToken, salt),
+    FLAG_ACTIVE,
   ]);
 
   const result = 'Користувач «' + trimmedName + '» доданий. Код доступу: ' + trimmedToken;
@@ -333,9 +532,11 @@ function resetUserAccessToken(userName, newAccessToken) {
   const trimmedName = String(userName || '').trim();
   const trimmedToken = String(newAccessToken || '').trim();
 
-  if (trimmedName === '' || trimmedToken === '') {
-    throw new Error('Потрібні і ім\'я, і новий код доступу');
+  if (trimmedName === '') {
+    throw new Error('Потрібне ім\'я');
   }
+
+  requireStrongAccessToken(trimmedToken);
 
   const usersSheet = getRequiredSheet(SHEET_USERS);
   const nameColumnIndex = findColumnIndex(usersSheet, HEADER_USER_NAME);
@@ -355,7 +556,7 @@ function resetUserAccessToken(userName, newAccessToken) {
     if (String(nameColumnValues[offset][0]).trim() !== trimmedName) continue;
 
     const rowIndex = offset + 2;
-    const newSalt = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+    const newSalt = generateSalt();
 
     usersSheet.getRange(rowIndex, saltColumnIndex + 1).setValue(newSalt);
     usersSheet.getRange(rowIndex, hashColumnIndex + 1).setValue(hashAccessToken(trimmedToken, newSalt));

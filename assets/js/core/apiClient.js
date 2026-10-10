@@ -111,6 +111,24 @@ function normalizeTransportError(error) {
 }
 
 /**
+ * Надсилає заявку на створення користувача.
+ *
+ * Єдиний запит без коду доступу - інакше заводити акаунт не мав би
+ * сенсу нікому. Обмеження на кількість заявок тримає сервер.
+ *
+ * @param {string} userName
+ * @param {string} password
+ */
+export function requestUserRegistration(userName, password) {
+  return sendCommand({
+    action: "requestRegistration",
+    accessToken: "",
+    name: userName,
+    password,
+  });
+}
+
+/**
  * Завантажує повний знімок бюджету разом з тим, хто увійшов.
  * @param {string} accessToken
  */

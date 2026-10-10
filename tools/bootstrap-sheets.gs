@@ -11,13 +11,16 @@
  */
 
 /**
- * Користувачі та їхні коди доступу. Код не генерується — ви задаєте
+ * Користувачі та їхні коди доступу. Код не генорується — ви задаєте
  * його самі і запам'ятовуєте. У таблиці зберігається лише хеш,
  * тому розшифрувати код із таблиці неможливо.
+ *
+ * Вимоги до коду: щонайменше 10 символів, має бути мала й велика
+ * літера та цифра. Перевіряє registerUser на сервері.
  */
 const DEMO_USERS = [
-  { name: 'Я',       color: '#2563eb', accessToken: 'grivna-2026' },
-  { name: 'Дружина', color: '#db2777', accessToken: 'kvitka-2026' },
+  { name: 'Я',       color: '#2563eb', accessToken: 'Grivna-2026' },
+  { name: 'Дружина', color: '#db2777', accessToken: 'Kvitka-2026' },
 ];
 
 /** Каталог категорій: назва, тип, іконка, колір, місячний ліміт у гривнях. */
@@ -49,7 +52,7 @@ function bootstrapSheets() {
   ]);
 
   writeSheet(spreadsheet, 'Users', [
-    'Ім\'я', 'Колір', 'Сіль', 'Код доступу',
+    'Ім\'я', 'Колір', 'Сіль', 'Код доступу', 'Активний',
   ]);
 
   fillCategories();
@@ -106,10 +109,10 @@ function fillUsers() {
 
   const userRows = DEMO_USERS.map(function (user) {
     const salt = generateSalt();
-    return [user.name, user.color, salt, hashAccessToken(user.accessToken, salt)];
+    return [user.name, user.color, salt, hashAccessToken(user.accessToken, salt), 'Так'];
   });
 
-  usersSheet.getRange(2, 1, userRows.length, 4).setValues(userRows);
+  usersSheet.getRange(2, 1, userRows.length, 5).setValues(userRows);
 }
 
 /** @returns {string} випадкова рядкова сіль */

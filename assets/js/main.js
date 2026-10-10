@@ -24,6 +24,7 @@ import { findById, on, setVisibility } from "./ui/dom.js";
 import { initEntryForm } from "./ui/entryForm.js";
 import { initOverviewPanel } from "./ui/overviewPanel.js";
 import { initProfileChip } from "./ui/profileChip.js";
+import { initRegistrationPanel } from "./ui/registrationPanel.js";
 import { initSyncIndicator } from "./ui/syncIndicator.js";
 import { initTransactionList } from "./ui/transactionList.js";
 import { showToast } from "./ui/toast.js";
@@ -53,6 +54,7 @@ const profileChip = initProfileChip({ onSwitchUser: confirmUserSwitch });
 
 initCollapsibleCards();
 initViewSwitcher();
+initRegistrationPanel();
 
 const accessGate = initAccessGate({
   onUnlock: unlockApplication,

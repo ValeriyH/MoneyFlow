@@ -25,6 +25,8 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
   const gateSubmitButtonElement = findById("accessGateSubmit");
   const gateCountdownElement = findById("accessGateCountdown");
 
+  const registrationFormElement = findById("registrationForm");
+
   /** Таймер зворотного відліку, доки сервер тримає вхід заблокованим. */
   let countdownTimerHandle = null;
 
@@ -38,6 +40,8 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
       return;
     }
 
+    setVisibility(registrationFormElement, false);
+    setVisibility(gateFormElement, true);
     accessTokenInputElement.focus();
   }
 

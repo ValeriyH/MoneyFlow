@@ -14,7 +14,7 @@
 </head>
 
 <body>
-  <!-- ── Екран входу: код доступу окремого користувача ───────────────────── -->
+  <!-- ── Екран входу: код доступу або реєстрація нового користувача ── -->
   <div class="gate" id="accessGate" hidden>
     <form class="gate__card" id="accessGateForm" autocomplete="off">
       <div class="gate__icon" aria-hidden="true">🔒</div>
@@ -32,7 +32,49 @@
         Увійти
       </button>
       <p class="gate__countdown" id="accessGateCountdown" hidden></p>
-      <p class="gate__footnote">Код задається в аркуші <code>Users</code> таблиці.</p>
+
+      <button class="gate__switch" type="button" id="showRegistrationButton">
+        Немає коду? Створити акаунт
+      </button>
+    </form>
+
+    <form class="gate__card" id="registrationForm" autocomplete="off" hidden>
+      <div class="gate__icon" aria-hidden="true">👋</div>
+      <h1 class="gate__title">Новий користувач</h1>
+      <p class="gate__hint">
+        Оберіть ім'я та пароль. Акаунт створиться неактивним — увійти
+        зможете, коли власник таблиці увімкне його.
+      </p>
+
+      <label class="field">
+        <span class="field__label">Ім'я</span>
+        <input class="field__input" type="text" id="registrationNameInput"
+               placeholder="Наприклад, Оля" maxlength="40" autocomplete="off" required>
+      </label>
+
+      <label class="field">
+        <span class="field__label">Пароль</span>
+        <input class="field__input" type="password" id="registrationPasswordInput"
+               placeholder="щонайменше 10 символів"
+               autocomplete="new-password" required>
+
+        <ul class="requirements" id="passwordRequirements">
+          <li class="requirements__item" data-rule="length">10 символів</li>
+          <li class="requirements__item" data-rule="uppercase">велика літера</li>
+          <li class="requirements__item" data-rule="digit">цифра</li>
+        </ul>
+      </label>
+
+      <p class="field__hint">Пароль ніде не зберігається — лише його хеш.</p>
+      <p class="gate__error" id="registrationError" role="alert" hidden></p>
+
+      <button class="button button--primary button--block" type="submit" id="registrationSubmit">
+        Створити акаунт
+      </button>
+
+      <button class="gate__switch" type="button" id="showLoginButton">
+        Вже є код? Увійти
+      </button>
     </form>
   </div>
 

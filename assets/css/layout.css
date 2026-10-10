@@ -179,6 +179,14 @@
   color: var(--color-expense);
 }
 
+.gate__error[data-tone="success"] {
+  color: var(--color-income);
+  background: var(--color-income-soft);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+}
+
 /* Зворотний відлік блокування після серії невдалих спроб. */
 .gate__countdown {
   padding: 10px 12px;
@@ -191,7 +199,23 @@
   text-align: center;
 }
 
-/* ── Сповіщення ────────────────────────────────────────────────────────── */
+/* Перемикання між входом і реєстрацією. */
+.gate__switch {
+  padding: var(--space-2) 0 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gate__switch:hover {
+  color: var(--color-accent-strong);
+}
+
+/* ── Спливаючі повідомлення ─────────────────────────────────────────────── */
 
 .toast-host {
   position: fixed;

@@ -224,6 +224,37 @@
   border-radius: 0;
 }
 
+/* Чекліст вимог до пароля: видно одразу, без спроб натиснути «Створити». */
+.requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.requirements__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  transition: color var(--motion-fast);
+}
+
+.requirements__item::before {
+  content: "○";
+  font-size: 11px;
+  line-height: 1;
+}
+
+.requirements__item.is-met {
+  color: var(--color-income);
+}
+
+.requirements__item.is-met::before {
+  content: "●";
+}
+
 /* ── Редактор суми ──────────────────────────────────────────────────────── */
 
 .amount-editor {
