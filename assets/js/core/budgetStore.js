@@ -100,6 +100,21 @@ function readCoveredPeriods(snapshot) {
 }
 
 /**
+ * Місяць, який дивимось, і попередній до нього.
+ *
+ * Попередній потрібен не тільки для показника «у порівнянні з
+ * минулим», а й для розподілу та лімітів. Тому це не два незалежні
+ * запити, а завжди пара: показати місяць без попереднього означає
+ * показати половину панелі й мовчки відсутнє порівняння.
+ *
+ * @param {string} periodKey — «2026-10»
+ * @returns {Array<string>} `['2026-10', '2026-09']`
+ */
+function withPreviousPeriod(periodKey) {
+  return [periodKey, shiftPeriodKey(periodKey, -1)];
+}
+
+/**
  * Лишаємо не більше ніж `limit` місяців.
  *
  * Обов'язково втримуємо `mustKeep` — інакше панелі могли б назавжди
@@ -337,7 +352,11 @@ class BudgetStore {
    */
   #requestedPeriods() {
     const loadedPeriods = this.#state.loadedPeriods;
-    if (loadedPeriods.length === 0) return [currentPeriodKey()];
+
+    if (loadedPeriods.length === 0) {
+      const currentMonth = currentPeriodKey();
+      return withPreviousPeriod(currentMonth);
+    }
 
     if (!this.#activePeriodKey || loadedPeriods.includes(this.#activePeriodKey)) {
       return loadedPeriods;
@@ -374,35 +393,35 @@ class BudgetStore {
   /**
    * Догружає місяць, якого ще немає в пам'яті.
    *
-   * Береться місяць і попередній: попередній потрібен для
-   * «динаміки до попереднього місяця». Уже завантажений місяць
-   * повторно не запитується — за цю сесію він вже в пам'яті.
+   * Береться місяць **і попередній**: попередній потрібен для
+   * «динаміки до минулого місяця». Тому місяць вважається готовим
+   * лише тоді, коли готовий і попередній — інакше порівняння просто
+   * не з'явиться, хоча дані для нього є.
    *
    * @param {string} periodKey — «2026-10»
    * @returns {Promise<void>}
    */
   async loadPeriod(periodKey) {
-    if (this.isPeriodLoaded(periodKey)) return;
     if (!this.#sessionToken) return;
 
-    // Подвійний клік по «назад» не має породжувати два запити:
-    // другий місяць часто вже їде у відповіді на перший.
-    if (this.#loadingPeriods.has(periodKey)) return;
-    this.#loadingPeriods.add(periodKey);
+    const neededPeriods = withPreviousPeriod(periodKey);
+    if (neededPeriods.every((needed) => this.isPeriodLoaded(needed))) return;
+
+    // Не дублювати роботу, поки запит із тими самими місяцями ще
+    // в дорозі. Швидке перемикання двома кліками не має породжувати
+    // два однакові запити.
+    if (neededPeriods.some((needed) => this.#loadingPeriods.has(needed))) return;
+    neededPeriods.forEach((needed) => this.#loadingPeriods.add(needed));
 
     this.#patch({ syncState: SYNC_STATE.loading });
 
     try {
-      const snapshot = await fetchBudgetSnapshot(this.#sessionToken, [
-        periodKey,
-        shiftPeriodKey(periodKey, -1),
-      ]);
-      this.#applySnapshot(snapshot);
+      this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken, neededPeriods));
       this.#patchSyncStateFromQueue();
     } catch (error) {
       this.#handleSyncError(error);
     } finally {
-      this.#loadingPeriods.delete(periodKey);
+      neededPeriods.forEach((needed) => this.#loadingPeriods.delete(needed));
     }
   }
 
