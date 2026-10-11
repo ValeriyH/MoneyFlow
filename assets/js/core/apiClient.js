@@ -16,12 +16,27 @@ import { APPS_SCRIPT_ENDPOINT, REQUEST_TIMEOUT_MS } from "../config.js";
 /** Коди помилок, які бекенд повертає в тілі відповіді. */
 export const API_ERROR_CODE = {
   unauthorized: "UNAUTHORIZED",
+  // Токен підписаний правильно, але термін вичерпано. Єдина
+  // відмова, після якої достатньо увійти знову.
+  sessionExpired: "SESSION_EXPIRED",
   rateLimited: "RATE_LIMITED",
   badRequest: "BAD_REQUEST",
   serverError: "SERVER_ERROR",
   network: "NETWORK",
   timeout: "TIMEOUT",
 };
+
+/**
+ * Коди, за якими треба показати екран входу.
+ *
+ * SESSION_EXPIRED — тимчасово: ввійдете знову й черга дійде.
+ * UNAUTHORIZED — назавжди або до дії адміністратора: повторний
+ * вхід не допоможе, тому черга викидається (див. budgetStore).
+ */
+export const AUTH_FAILURE_CODES = [
+  API_ERROR_CODE.unauthorized,
+  API_ERROR_CODE.sessionExpired,
+];
 
 /** Помилка, зрозуміла до верхнього шару: має стабільний код і людське повідомлення. */
 export class ApiError extends Error {

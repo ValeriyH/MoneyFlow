@@ -7,15 +7,15 @@
  */
 
 import { SYNC_STATE, isEnvironmentConfigured } from "./config.js";
-import { API_ERROR_CODE, openSession } from "./core/apiClient.js";
+import { AUTH_FAILURE_CODES, openSession } from "./core/apiClient.js";
 import { budgetStore } from "./core/budgetStore.js";
 import {
   currentServerAlignedTime,
-  forgetSessionToken,
-  loadSessionToken,
+  forgetSession,
+  loadSession,
   loadActivePeriod,
   saveClockOffset,
-  saveSessionToken,
+  saveSession,
   saveActivePeriod,
 } from "./core/localStore.js";
 import { buildLoginProof, isCryptoAvailable } from "./domain/crypto.js";
@@ -79,9 +79,9 @@ if (!isEnvironmentConfigured()) {
   setVisibility(findById("unconfiguredGate"), true);
 } else if (!isCryptoAvailable()) {
   setVisibility(findById("insecureContextGate"), true);
-} else if (loadSessionToken()) {
+} else if (loadSession()) {
   budgetStore.hydrateFromCache();
-  budgetStore.setSessionToken(loadSessionToken());
+  budgetStore.setSession(loadSession());
   revealApplication();
   requestSync();
 } else {
@@ -97,11 +97,16 @@ async function requestSync() {
   if (!hasSucceeded) {
     const { syncState, syncMessage, syncErrorCode } = budgetStore.getState();
 
-    if (syncErrorCode === API_ERROR_CODE.unauthorized) {
-      // Токен прострочений або пароль змінено: викидаємо його,
-      // інакше наступне відкриття знову піде в той самий відмовий запит.
-      budgetStore.setSessionToken(null);
-      forgetSessionToken();
+    if (AUTH_FAILURE_CODES.includes(syncErrorCode)) {
+      // Будь-яка відмова в авторизації означає одне: треба увійти
+      // знову. Токен прибираємо, інакше наступне відкриття знову
+      // піде в той самий відмовий запит.
+      //
+      // Чергу це не торкається - нею опікується budgetStore:
+      // на SESSION_EXPIRED записи лишаються, на UNAUTHORIZED
+      // (вимкнули акаунт, змінили пароль) - видаляються.
+      budgetStore.setSession(null);
+      forgetSession();
 
       // Застосунок ховаємо разом із gate: інакше під формою
       // лишилися б старі витрати, які вже не синхронізуються.
@@ -138,14 +143,14 @@ async function unlockApplication({ login, password }) {
   const response = await openSession({ login, proof, timestamp: requestTimestamp });
 
   saveClockOffset(response.serverTime - Date.now());
-  saveSessionToken(response.token);
+  saveSession(response.token, login);
 
-  budgetStore.setSessionToken(response.token);
+  budgetStore.setSession({ token: response.token, login });
 
   const hasSucceeded = await budgetStore.synchronize();
   if (!hasSucceeded) {
-    budgetStore.setSessionToken(null);
-    forgetSessionToken();
+    budgetStore.setSession(null);
+    forgetSession();
 
     // Прокидаємо саму помилку, а не її текст: екран входу має
     // відрізнити «невірний пароль» від «забагато спроб».
@@ -158,8 +163,8 @@ async function unlockApplication({ login, password }) {
 }
 
 function handleUnlockFailure() {
-  budgetStore.setSessionToken(null);
-  forgetSessionToken();
+  budgetStore.setSession(null);
+  forgetSession();
 }
 
 function revealApplication() {
@@ -237,6 +242,57 @@ function updatePeriodNavigationAvailability(referenceDate) {
   periodNextButtonElement.disabled = sessionState.activePeriodKey >= currentPeriodKey(referenceDate);
 }
 
+/* ── Вихід із системи ────────────────────────────────────────────────────── */
+
+/**
+ * «1 запис у черзі залишиться», «2 записи ... залишаться»,
+ * «5 записів ... залишаться».
+ *
+ * Українські числівники вимагають узгодження і з дієсловом:
+ * «1 запис залишаться» — граматично неправильно. Тому рахуємо
+ * разом із формою дієслова, а не лише іменник.
+ *
+ * @param {number} count
+ * @returns {string}
+ */
+function describeQueuedEntries(count) {
+  const lastDigit = count % 10;
+  const lastTwoDigits = count % 100;
+
+  if (lastDigit === 1 && lastTwoDigits !== 11) {
+    return `${count} запис у черзі залишиться й дійде`;
+  }
+
+  if (lastDigit >= 2 && lastDigit <= 4 && (lastTwoDigits < 12 || lastTwoDigits > 14)) {
+    return `${count} записи в черзі залишаться й дійдуть`;
+  }
+
+  return `${count} записів у черзі залишаться й дійдуть`;
+}
+
+/**
+ * Виходить із системи на цьому пристрої.
+ *
+ * Один вихід на два кнопки (профіль у шапці й підвал) — щоб текст
+ * і поведінка не розходилися. Нічого не губиться: черга належить
+ * людині й дійде, коли вона знову увійде; стирається лише кеш
+ * знімка, щоб наступний не бачив чужих витрат.
+ */
+function confirmAndExit() {
+  const { pendingEntries } = budgetStore.getState();
+
+  const message = pendingEntries.length > 0
+    ? `Вийти з системи? ${describeQueuedEntries(pendingEntries.length)}, ` +
+      `коли ви знову увійдете.`
+    : "Вийти з системи?";
+
+  if (!window.confirm(message)) return;
+
+  forgetSession();
+  budgetStore.reset();
+  window.location.reload();
+}
+
 /* ── Навігація місяцями ─────────────────────────────────────────────────── */
 
 function initPeriodSwitcher() {
@@ -248,15 +304,7 @@ function initPeriodSwitcher() {
     moveActivePeriodBy(1);
   });
 
-  on(logoutButtonElement, "click", () => {
-    if (!window.confirm("Забути пароль на цьому пристрої? Записи в черзі залишаться.")) {
-      return;
-    }
-
-    forgetSessionToken();
-    budgetStore.reset();
-    window.location.reload();
-  });
+  on(logoutButtonElement, "click", confirmAndExit);
 }
 
 /**
@@ -330,16 +378,8 @@ async function confirmAndRemoveTransaction(transaction) {
 }
 
 /**
- * Профіль у шапці — це єдиний спосіб змінити користувача на пристрої.
- * Пароль зберігається один, тому «виходу» в ньому немає:
- * щоб записати під іншою людиною, вводяться її логін і пароль.
+ * Профіль у шапці — це той самий вихід із системи.
  */
 function confirmUserSwitch() {
-  if (!window.confirm("Перейти на іншого користувача? Введи його логін і пароль.")) {
-    return;
-  }
-
-  forgetSessionToken();
-  budgetStore.reset();
-  window.location.reload();
+  confirmAndExit();
 }

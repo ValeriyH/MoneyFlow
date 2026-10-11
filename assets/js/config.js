@@ -29,14 +29,23 @@ export function isEnvironmentConfigured() {
 
 /** Ключі, під якими дані лежать у localStorage цього браузера. */
 export const STORAGE_KEYS = {
-  sessionToken: "moneyflow.session-token",
+  session: "moneyflow.session",
   clockOffset: "moneyflow.clock-offset",
-  pendingEntries: "moneyflow.pending-entries",
   activePeriod: "moneyflow.active-period",
   activeView: "moneyflow.active-view",
   collapsedCards: "moneyflow.collapsed-cards",
   cachedSnapshot: "moneyflow.cached-snapshot",
 };
+
+/**
+ * Початок ключа черги. Далі дописується логін:
+ * `moneyflow.pending-entries.оля`.
+ *
+ * Черга належить конкретній людині. Один браузер може користуватися
+ * друзі й дружина: якщо б черга була спільною, записи одного
+ * відправилися б від імені іншого — сервер бере користувача з токена.
+ */
+export const PENDING_ENTRIES_KEY_PREFIX = "moneyflow.pending-entries.";
 
 /** Тип операції. */
 export const TRANSACTION_KIND = {

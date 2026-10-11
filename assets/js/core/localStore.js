@@ -6,7 +6,7 @@
  * а приватний режим не ламає весь застосунок.
  */
 
-import { STORAGE_KEYS } from "../config.js";
+import { PENDING_ENTRIES_KEY_PREFIX, STORAGE_KEYS } from "../config.js";
 
 /**
  * @param {string} storageKey
@@ -51,19 +51,31 @@ function removeValue(storageKey) {
 /* ── Сесія ───────────────────────────────────────────────────────────────── */
 
 /**
- * @returns {string | null} підписаний сервером токен
+ * Токен і логин зберігаються разом, а не окремо: так вони не можуть
+ * розійтися. Токен сам по собі не каже, чия це черга.
+ *
+ * @returns {{ token: string, login: string } | null}
  */
-export function loadSessionToken() {
-  return readJsonValue(STORAGE_KEYS.sessionToken, null);
+export function loadSession() {
+  const storedSession = readJsonValue(STORAGE_KEYS.session, null);
+
+  if (!storedSession || typeof storedSession !== "object") return null;
+  if (typeof storedSession.token !== "string" || storedSession.token === "") return null;
+  if (typeof storedSession.login !== "string" || storedSession.login === "") return null;
+
+  return { token: storedSession.token, login: storedSession.login };
 }
 
-/** @param {string} sessionToken */
-export function saveSessionToken(sessionToken) {
-  writeJsonValue(STORAGE_KEYS.sessionToken, sessionToken);
+/**
+ * @param {string} sessionToken
+ * @param {string} login
+ */
+export function saveSession(sessionToken, login) {
+  writeJsonValue(STORAGE_KEYS.session, { token: sessionToken, login });
 }
 
-export function forgetSessionToken() {
-  removeValue(STORAGE_KEYS.sessionToken);
+export function forgetSession() {
+  removeValue(STORAGE_KEYS.session);
 }
 
 /* ── Зсув годинника ─────────────────────────────────────────────────────── */
@@ -98,16 +110,36 @@ export function currentServerAlignedTime() {
 /* ── Черга несинхронізованих операцій ───────────────────────────────────── */
 
 /**
+ * Черга окрема на кожного користувача: записи, зроблені під одним
+ * логіном, не можуть потрапити в таблицю від імені іншого.
+ *
+ * @param {string | null} login
+ * @returns {string}
+ */
+function pendingEntriesKey(login) {
+  return PENDING_ENTRIES_KEY_PREFIX + String(login ?? "").trim().toLowerCase();
+}
+
+/**
+ * @param {string | null} login
  * @returns {Array<object>} операції, які ще не дійшли до таблиці
  */
-export function loadPendingEntries() {
-  const storedEntries = readJsonValue(STORAGE_KEYS.pendingEntries, []);
+export function loadPendingEntries(login) {
+  const storedEntries = readJsonValue(pendingEntriesKey(login), []);
   return Array.isArray(storedEntries) ? storedEntries : [];
 }
 
-/** @param {Array<object>} pendingEntries */
-export function savePendingEntries(pendingEntries) {
-  return writeJsonValue(STORAGE_KEYS.pendingEntries, pendingEntries);
+/**
+ * @param {string | null} login
+ * @param {Array<object>} pendingEntries
+ */
+export function savePendingEntries(login, pendingEntries) {
+  return writeJsonValue(pendingEntriesKey(login), pendingEntries);
+}
+
+/** @param {string | null} login */
+export function hasPendingEntries(login) {
+  return loadPendingEntries(login).length > 0;
 }
 
 /* ── Вигляд застосунку ──────────────────────────────────────────────────── */

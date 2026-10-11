@@ -14,6 +14,7 @@ import { FALLBACK_CATEGORIES, SYNC_STATE } from "../config.js";
 import {
   ApiError,
   API_ERROR_CODE,
+  AUTH_FAILURE_CODES,
   deleteTransaction,
   fetchBudgetSnapshot,
   submitTransaction,
@@ -46,6 +47,22 @@ function isWorthRetrying(error) {
   return error instanceof ApiError && RETRYABLE_ERROR_CODES.includes(error.code);
 }
 
+
+/**
+ * Термін сесії вичерпано: токен підписаний правильно, усі дані
+ * в ньому чесні, просто пройшов час.
+ *
+ * Це єдина відмова, після якої достатньо увійти знову: записи
+ * лишаються в черзі й доходять після того, як ви знову ввійдете.
+ * Решта відмов (акаунт вимкнено, пароль змінено, токен підроблено)
+ * сюди не потрапляють: повторний вхід їх не виправить, і запис
+ * блокував би решту черги вічно.
+ *
+ * @param {unknown} error
+ */
+function isSessionExpired(error) {
+  return error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired;
+}
 /** Незмінний початковий стан — до нього повертаємось при помилці. */
 function createInitialState() {
   return {
@@ -56,7 +73,7 @@ function createInitialState() {
     /** @type {Array<object>} */
     transactions: [],
     /** @type {Array<object>} дії, які ще не дійшли до сервера */
-    pendingEntries: loadPendingEntries(),
+    pendingEntries: loadPendingEntries(null),
     /** @type {string} ISO-час останньої успішної синхронізації */
     lastSyncedAt: null,
     /** @type {string} значення SYNC_STATE */
@@ -78,12 +95,23 @@ class BudgetStore {
   #state = createInitialState();
   #listeners = new Set();
   #sessionToken = null;
+  /** @type {string | null} логін поточної сесії: черга належить йому */
+  #sessionLogin = null;
   /** @type {Promise<void> | null} відправка, яка вже триває */
   #flushPromise = null;
+  /**
+   * Токен завжди йде з логіном: вони визначають, чию чергу
+   * ми читаємо і чиї записи відправляємо.
+   *
+   * @param {{ token: string, login: string } | null} session
+   */
+  setSession(session) {
+    this.#sessionToken = session?.token ?? null;
+    this.#sessionLogin = session?.login ?? null;
 
-  /** @param {string} sessionToken */
-  setSessionToken(sessionToken) {
-    this.#sessionToken = sessionToken;
+    // Черга змінюється разом із входом, тому перечитуємо її з
+    // пам'яті: щоб на екрані було видно саме свої записи.
+    this.#patch({ pendingEntries: loadPendingEntries(this.#sessionLogin) });
   }
 
   /** @returns {Readonly<object>} */
@@ -119,7 +147,7 @@ class BudgetStore {
       categories: cachedSnapshot.categories?.length ? cachedSnapshot.categories : FALLBACK_CATEGORIES,
       transactions: cachedSnapshot.transactions ?? [],
       lastSyncedAt: cachedSnapshot.lastSyncedAt,
-      pendingEntries: loadPendingEntries(),
+      pendingEntries: loadPendingEntries(this.#sessionLogin),
     });
   }
 
@@ -181,12 +209,12 @@ class BudgetStore {
    */
   async #sendQueuedEntries() {
     while (true) {
-      const [nextQueuedEntry] = loadPendingEntries();
+      const [nextQueuedEntry] = loadPendingEntries(this.#sessionLogin);
       if (!nextQueuedEntry) return;
 
       this.#patch({
         syncState: SYNC_STATE.pending,
-        pendingEntries: loadPendingEntries(),
+        pendingEntries: loadPendingEntries(this.#sessionLogin),
       });
 
       try {
@@ -198,6 +226,10 @@ class BudgetStore {
         this.#applySnapshot(response.snapshot);
         this.#removeFromQueue(nextQueuedEntry.id);
       } catch (error) {
+        // Прострочена сесія - не відмова. Запис лишається в
+        // черзі й дійде одразу після повторного входу.
+        if (isSessionExpired(error)) throw error;
+
         if (!isWorthRetrying(error)) {
           this.#discardPendingEntry(nextQueuedEntry.id, nextQueuedEntry.transaction?.id);
           continue;
@@ -247,10 +279,10 @@ class BudgetStore {
     const errorCode = error instanceof ApiError ? error.code : null;
     const errorMessage = error instanceof Error ? error.message : "Невідома помилка синхронізації";
 
-    if (errorCode === API_ERROR_CODE.unauthorized) {
+    if (AUTH_FAILURE_CODES.includes(errorCode)) {
       this.#patch({
         syncState: SYNC_STATE.error,
-        syncMessage: "Сесія завершилася — увійдіть знову",
+        syncMessage: errorMessage,
         syncErrorCode: errorCode,
         lastSyncError: error,
       });
@@ -283,7 +315,9 @@ class BudgetStore {
       this.#patchSyncStateFromQueue();
       return { deliveredImmediately: true, error: null };
     } catch (error) {
-      if (!isWorthRetrying(error)) {
+      // Прострочена сесія - не відмова: запис лишається в
+      // черзі й дійде після повторного входу.
+      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
         this.#discardPendingEntry(queuedEntryId, transaction.id);
         this.#patchSyncStateFromQueue();
       }
@@ -304,7 +338,9 @@ class BudgetStore {
       this.#patchSyncStateFromQueue();
       return { deliveredImmediately: true, error: null };
     } catch (error) {
-      if (!isWorthRetrying(error)) {
+      // Прострочена сесія - не відмова: видалення лишається
+      // в черзі й дійде після повторного входу.
+      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
         this.#discardPendingEntry(queuedEntryId);
         this.#patchSyncStateFromQueue();
       }
@@ -321,8 +357,8 @@ class BudgetStore {
   #enqueuePendingEntry(pendingAction) {
     const queuedEntry = { ...pendingAction, id: crypto.randomUUID() };
 
-    const updatedEntries = [...loadPendingEntries(), queuedEntry];
-    savePendingEntries(updatedEntries);
+    const updatedEntries = [...loadPendingEntries(this.#sessionLogin), queuedEntry];
+    savePendingEntries(this.#sessionLogin, updatedEntries);
 
     const syncState = navigator.onLine ? SYNC_STATE.pending : SYNC_STATE.offline;
 
@@ -347,8 +383,8 @@ class BudgetStore {
 
   /** @param {string} queuedEntryId */
   #removeFromQueue(queuedEntryId) {
-    const remainingEntries = loadPendingEntries().filter((entry) => entry.id !== queuedEntryId);
-    savePendingEntries(remainingEntries);
+    const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
+    savePendingEntries(this.#sessionLogin, remainingEntries);
     this.#patch({ pendingEntries: remainingEntries });
   }
 
@@ -360,8 +396,8 @@ class BudgetStore {
    * @param {string} [transactionId] — для «add» ще й прибираємо з UI
    */
   #discardPendingEntry(queuedEntryId, transactionId) {
-    const remainingEntries = loadPendingEntries().filter((entry) => entry.id !== queuedEntryId);
-    savePendingEntries(remainingEntries);
+    const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
+    savePendingEntries(this.#sessionLogin, remainingEntries);
 
     this.#patch({
       pendingEntries: remainingEntries,
@@ -371,11 +407,17 @@ class BudgetStore {
     });
   }
 
-  /** Повністю скидає стан — використовується при виході («забути пароль»). */
+  /**
+   * Скидає стан на виході («забути пароль»).
+   *
+   * Чергу НЕ чистить: вона належить людині, а не сесії, і має
+   * дійти, коли вона знову увійде. Кеш знімка чистимо — це дані
+   * попереднього користувача, і наступному показувати їх не треба.
+   */
   reset() {
-    savePendingEntries([]);
     clearCachedSnapshot();
     this.#state = createInitialState();
+    this.#state = { ...this.#state, pendingEntries: loadPendingEntries(this.#sessionLogin) };
     for (const listener of this.#listeners) listener(this.#state);
   }
 }
