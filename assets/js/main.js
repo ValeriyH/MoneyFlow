@@ -47,6 +47,10 @@ const periodPrevButtonElement = findById("periodPrevButton");
 const periodNextButtonElement = findById("periodNextButton");
 const lastSyncLabelElement = findById("lastSyncLabel");
 const logoutButtonElement = findById("logoutButton");
+const periodLoadingElement = findById("periodLoading");
+const overviewPanelElement = findById("overviewPanel");
+const budgetPanelElement = findById("budgetPanel");
+const historyPanelElement = findById("historyPanel");
 
 const overviewPanel = initOverviewPanel();
 const budgetPanel = initBudgetPanel();
@@ -93,6 +97,12 @@ if (!isEnvironmentConfigured()) {
 /** @returns {Promise<void>} */
 async function requestSync() {
   const hasSucceeded = await budgetStore.synchronize();
+
+  // Сервер віддає тільки запитані місяці, тож синхронізація
+  // закриває лише ті, що були в пам'яті. Обраний місяць міг бути
+  // іншим (його видно одразу після перезавантаження) — діванемо
+  // його окремим запитом. Якщо він уже є, це нібий виклик.
+  await budgetStore.loadPeriod(sessionState.activePeriodKey);
 
   if (!hasSucceeded) {
     const { syncState, syncMessage, syncErrorCode } = budgetStore.getState();
@@ -172,6 +182,10 @@ function revealApplication() {
   sessionState.isAppVisible = true;
   accessGate.render(true);
 
+  // Відкритий місяць не можна викинути з пам'яті — інакше панелі
+  // залишаться на «Завантаження місяця…» назавжди.
+  budgetStore.setActivePeriod(sessionState.activePeriodKey);
+
   // Стан уже містить дані (sync відпрацював до показу застосунку),
   // але підписка їх пропустила, бо застосунок був невидимий.
   // Тому один примусовий рендер тут, а не передбачення в підписці.
@@ -194,10 +208,24 @@ function renderApplicationState(state) {
   periodLabelElement.textContent = formatPeriodCaption(sessionState.activePeriodKey);
   lastSyncLabelElement.textContent = describeLastSync(state.lastSyncedAt);
 
+  // Поки місяць не прийшов із сервера, панелі ховаємо. Показувати
+  // замість них нулі було б брехнею: виглядало б так, наче в цьому
+  // місяці ніхто нічого не витратив.
+  const isPeriodReady = budgetStore.isPeriodLoaded(sessionState.activePeriodKey);
+  setVisibility(periodLoadingElement, !isPeriodReady);
+  setVisibility(overviewPanelElement, isPeriodReady);
+  setVisibility(budgetPanelElement, isPeriodReady);
+  setVisibility(historyPanelElement, isPeriodReady);
+
+  // Форма працює завжди: введення видатків не має чекати на панелі.
   entryForm.render(state);
-  overviewPanel.render(state, sessionState.activePeriodKey, referenceDate);
-  budgetPanel.render(state, sessionState.activePeriodKey, referenceDate);
-  transactionList.render(state, sessionState.activePeriodKey);
+
+  if (isPeriodReady) {
+    overviewPanel.render(state, sessionState.activePeriodKey, referenceDate);
+    budgetPanel.render(state, sessionState.activePeriodKey, referenceDate);
+    transactionList.render(state, sessionState.activePeriodKey);
+  }
+
   syncIndicator.render(state);
   profileChip.render(state);
 
@@ -311,9 +339,17 @@ function initPeriodSwitcher() {
  * @param {number} offsetInMonths
  */
 function moveActivePeriodBy(offsetInMonths) {
-  sessionState.activePeriodKey = shiftPeriodKey(sessionState.activePeriodKey, offsetInMonths);
-  saveActivePeriod(sessionState.activePeriodKey);
+  const nextPeriodKey = shiftPeriodKey(sessionState.activePeriodKey, offsetInMonths);
+
+  sessionState.activePeriodKey = nextPeriodKey;
+  saveActivePeriod(nextPeriodKey);
+  budgetStore.setActivePeriod(nextPeriodKey);
   renderApplicationState(budgetStore.getState());
+
+  // Місяць, якого ще немає в пам'яті, треба запитати окремо: сервер
+  // віддає тільки те, що попросили. Уже завантажений — миттєво,
+  // без запиту: цього разу він лишається в пам'яті до кінця сесії.
+  budgetStore.loadPeriod(nextPeriodKey);
 }
 
 /* ── Реакція на зовнішні події ──────────────────────────────────────────── */

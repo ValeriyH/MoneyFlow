@@ -168,11 +168,17 @@ export function requestUserRegistration(login, passwordHash) {
 }
 
 /**
- * Завантажує повний знімок бюджету разом із тим, хто увійшов.
+ * Завантажує знімок бюджету разом із тим, хто увійшов.
+ *
+ * `periods` — місяці, які клієнт уже тримає в пам'яті. Сервер
+ * поверне тільки їх: так знімок на два десятки кілобайт не виростає
+ * до мегабайтів, а вже завантажені місяці не треба перезапитувати.
+ *
  * @param {string} sessionToken
+ * @param {Array<string>} periods
  */
-export function fetchBudgetSnapshot(sessionToken) {
-  return sendCommand({ action: "loadSnapshot", sessionToken });
+export function fetchBudgetSnapshot(sessionToken, periods) {
+  return sendCommand({ action: "loadSnapshot", sessionToken, periods });
 }
 
 /**
@@ -181,16 +187,18 @@ export function fetchBudgetSnapshot(sessionToken) {
  *
  * @param {string} sessionToken
  * @param {object} transactionPayload
+ * @param {Array<string>} periods — ті самі, що й при читанні
  */
-export function submitTransaction(sessionToken, transactionPayload) {
-  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload });
+export function submitTransaction(sessionToken, transactionPayload, periods) {
+  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods });
 }
 
 /**
  * Видаляє операцію за її стійким ідентифікатором.
  * @param {string} sessionToken
  * @param {string} transactionId
+ * @param {Array<string>} periods
  */
-export function deleteTransaction(sessionToken, transactionId) {
-  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId });
+export function deleteTransaction(sessionToken, transactionId, periods) {
+  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods });
 }

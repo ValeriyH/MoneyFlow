@@ -129,6 +129,22 @@
   text-align: center;
 }
 
+/*
+ * Показується, поки місяць ще не прийшов із сервера.
+ *
+ * Важливо, що це не порожні панелі з нулями: нулі виглядали б так,
+ * наче в цьому місяці ніхто нічого не витратив.
+ */
+.period-loading {
+  padding: var(--space-6) var(--space-4);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
+  text-align: center;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+}
+
 /* ── Поля вводу ─────────────────────────────────────────────────────────── */
 
 .field {

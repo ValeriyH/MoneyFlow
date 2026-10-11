@@ -63,6 +63,25 @@ const REQUIRED_CATEGORY_COLUMNS = [
   HEADER_CATEGORY_COLOR, HEADER_CATEGORY_LIMIT,
 ];
 
+/*
+ * Скільки місяців дозволяємо просити в одному запиті.
+ *
+ * Клієнт надсилає рівно ті місяці, які вже тримає в пам'яті, щоб
+ * серверний знімок не витер у нього решту. Обмеження ставить межу
+ * тому, що клієнт не може витягнути аркуш цілком одним запитом.
+ */
+const MAX_PERIODS_PER_REQUEST = 12;
+
+/*
+ * Запасні рядки з кожного боку потрібної смуги.
+ *
+ * Дати в таблиці зазвичай ідуть по порядку, але запис можна додати
+ * заднім числом — тоді він лежатиме поза смугою. Запас покриває
+ * такий випадок; фінальна фільтрація все одно точна, зайві рядки
+ * просто відкидаються.
+ */
+const PERIOD_ROW_WINDOW_PADDING = 60;
+
 const REQUIRED_USER_COLUMNS = [
   HEADER_USER_NAME, HEADER_USER_COLOR, HEADER_USER_PASSWORD_HASH, HEADER_USER_ACTIVE,
 ];
@@ -133,10 +152,11 @@ function doPost(request) {
     }
 
     const viewer = authenticateSession(payload.sessionToken);
+    const periods = parsePeriodsList(payload.periods);
 
     switch (payload.action) {
       case 'loadSnapshot':
-        return respondWithJson(Object.assign({ ok: true }, buildSnapshot(viewer)));
+        return respondWithJson(Object.assign({ ok: true }, buildSnapshot(viewer, periods)));
 
       case 'addTransaction':
         return respondWithJson({
@@ -144,7 +164,7 @@ function doPost(request) {
           transaction: appendTransaction(payload.transaction, viewer),
           // Повертаємо оновлені дані одразу: інакше клієнту
           // довелося б робити другий запит і чекати ще ~3 секунди.
-          snapshot: buildSnapshot(viewer),
+          snapshot: buildSnapshot(viewer, periods),
         });
 
       case 'deleteTransaction':
@@ -152,7 +172,7 @@ function doPost(request) {
         return respondWithJson({
           ok: true,
           deletedId: String(payload.transactionId || '').trim(),
-          snapshot: buildSnapshot(viewer),
+          snapshot: buildSnapshot(viewer, periods),
         });
 
       default:
@@ -164,17 +184,81 @@ function doPost(request) {
 }
 
 /**
- * Повний знімок бюджету для конкретного користувача.
+ * Ключ поточного місяця «РРРР-ММ» у часовому поясі скрипта.
+ * @returns {string}
+ */
+function currentPeriodKey() {
+  const now = new Date();
+  const monthNumber = now.getMonth() + 1;
+  const month = monthNumber < 10 ? '0' + monthNumber : String(monthNumber);
+  return now.getFullYear() + '-' + month;
+}
+
+/**
+ * Перевіряє список місяців із запиту.
+ *
+ * Клієнт просить саме ті місяці, які вже тримає в пам'яті: так
+ * серверний знімок замінює їх і не зачіпає решту. Якщо список
+ * порожній або зовсім не прийшов — беремо поточний місяць, щоб
+ * клієнт, який ще не вміє надсилати `periods`, отримав хоча б
+ * щось осмислене, а не порожню таблицю.
+ *
+ * @param {unknown} rawPeriods
+ * @returns {Array<string>}
+ * @throws {RequestError}
+ */
+function parsePeriodsList(rawPeriods) {
+  if (rawPeriods === undefined || rawPeriods === null) return [currentPeriodKey()];
+
+  if (!Array.isArray(rawPeriods)) {
+    throw new RequestError('Поле periods має бути масивом ключів «РРРР-ММ».', 'BAD_REQUEST');
+  }
+
+  const periods = [];
+
+  rawPeriods.forEach(function (rawPeriod) {
+    const period = String(rawPeriod === undefined || rawPeriod === null ? '' : rawPeriod).trim();
+
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      throw new RequestError(
+        'Невірний ключ місяця: ' + (period || '(порожньо)') + '. Очікується формат «РРРР-ММ».',
+        'BAD_REQUEST',
+      );
+    }
+
+    if (periods.indexOf(period) === -1) periods.push(period);
+  });
+
+  if (periods.length === 0) return [currentPeriodKey()];
+
+  if (periods.length > MAX_PERIODS_PER_REQUEST) {
+    throw new RequestError(
+      'Запит просить ' + periods.length + ' місяців, а дозволено максимум ' + MAX_PERIODS_PER_REQUEST + '.',
+      'BAD_REQUEST',
+    );
+  }
+
+  return periods;
+}
+
+/**
+ * Знімок бюджету для конкретного користувача й набору місяців.
+ *
+ * Повертається тільки запитані місяці — на п'ятирічній історії це
+ * два десятки кілобайт замість двох мегабайтів. Клієнт знає, які
+ * місяці прийшли, і замінює ними свої; решту не чіпає.
  *
  * @param {BudgetUser} viewer
- * @returns {{ serverTime: string, viewer: object, categories: Array<object>, transactions: Array<object> }}
+ * @param {Array<string>} periods
+ * @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, transactions: Array<object> }}
  */
-function buildSnapshot(viewer) {
+function buildSnapshot(viewer, periods) {
   return {
     serverTime: new Date().toISOString(),
     viewer: { name: viewer.name, color: viewer.color },
     categories: readCategories(),
-    transactions: readTransactions(),
+    periods: periods,
+    transactions: readTransactions(periods),
   };
 }
 
@@ -521,18 +605,56 @@ function readCategories() {
     });
 }
 
-/** @returns {Array<object>} */
-function readTransactions() {
+/**
+ * Операції лише за вказаними місяцями.
+ *
+ * Аркуш не читається цілком. Спершу одна колонка з датою — у вісім
+ * разів менше клітинок, ніж усі колонки, — щоб знайти межі потрібних
+ * місяців. Потім читається тільки смуга рядків між ними.
+ *
+ * @param {Array<string>} periods — ключі «РРРР-ММ»
+ * @returns {Array<object>}
+ */
+function readTransactions(periods) {
+  const sheet = getOptionalSheet(SHEET_TRANSACTIONS);
+  if (!sheet) return [];
+
+  const header = readSheetHeader(sheet);
+  requireSheetColumns(SHEET_TRANSACTIONS, header.index, REQUIRED_TRANSACTION_COLUMNS);
+
+  const lastRowIndex = sheet.getLastRow();
+  const lastColumnIndex = sheet.getLastColumn();
+  if (lastRowIndex < 2 || lastColumnIndex < 1) return [];
+
+  const columnIndexByName = buildColumnIndex(header.row);
+  const rowRange = findRowRangeByPeriods(
+    sheet,
+    lastRowIndex,
+    columnIndexByName[HEADER_DATE],
+    periods,
+  );
+  if (!rowRange) return [];
+
+  const sliceValues = sheet
+    .getRange(rowRange.firstRow, 1, rowRange.lastRow - rowRange.firstRow + 1, lastColumnIndex)
+    .getValues();
+
   const transactions = [];
   let skippedRowsCount = 0;
 
-  for (const record of readSheetAsRecords(SHEET_TRANSACTIONS, REQUIRED_TRANSACTION_COLUMNS)) {
-    const amount = toPositiveNumber(record[HEADER_AMOUNT]);
+  sliceValues.forEach(function (dataRow) {
+    const record = mapRowToRecord(dataRow, columnIndexByName);
     const occurredOn = toIsoDate(record[HEADER_DATE]);
+
+    // Чужий місяць просто ігноруємо — він у смузі опинився
+    // через запас на записи, додані заднім числом.
+    if (occurredOn && periods.indexOf(occurredOn.slice(0, 7)) === -1) return;
+
+    const amount = toPositiveNumber(record[HEADER_AMOUNT]);
 
     if (!amount || !occurredOn) {
       skippedRowsCount += 1;
-      continue;
+      return;
     }
 
     transactions.push({
@@ -545,13 +667,51 @@ function readTransactions() {
       note: String(record[HEADER_NOTE] || '').trim(),
       recordedAt: toIsoTimestamp(record[HEADER_RECORDED_AT]),
     });
-  }
+  });
 
   if (skippedRowsCount > 0) {
     console.warn('Пропущено рядків без суми або дати: ' + skippedRowsCount);
   }
 
   return transactions;
+}
+
+/**
+ * Знаходить смугу рядків, у якій лежать потрібні місяці.
+ *
+ * Читається тільки колонка з датою. Якщо дати в таблиці йдуть по
+ * порядку (а це так для всього, що пише сам застосунок), усі рядки
+ * потрібних місяців стоять поруч — і ми читаємо саме їх. Запас
+ * з боків покриває записи, додані заднім числом.
+ *
+ * @param {Sheet} sheet
+ * @param {number} lastRowIndex
+ * @param {number | undefined} dateColumnIndex — індекс колонки з датою
+ * @param {Array<string>} periods
+ * @returns {{ firstRow: number, lastRow: number } | null}
+ */
+function findRowRangeByPeriods(sheet, lastRowIndex, dateColumnIndex, periods) {
+  if (dateColumnIndex === undefined) return null;
+
+  const dateValues = sheet.getRange(2, dateColumnIndex + 1, lastRowIndex - 1, 1).getValues();
+
+  let firstMatchedRow = 0;
+  let lastMatchedRow = 0;
+
+  dateValues.forEach(function (dateRow, offset) {
+    const isoDate = toIsoDate(dateRow[0]);
+    if (!isoDate || periods.indexOf(isoDate.slice(0, 7)) === -1) return;
+
+    if (firstMatchedRow === 0) firstMatchedRow = offset + 2;
+    lastMatchedRow = offset + 2;
+  });
+
+  if (firstMatchedRow === 0) return null;
+
+  return {
+    firstRow: Math.max(2, firstMatchedRow - PERIOD_ROW_WINDOW_PADDING),
+    lastRow: Math.min(lastRowIndex, lastMatchedRow + PERIOD_ROW_WINDOW_PADDING),
+  };
 }
 
 /* ── Запис даних ─────────────────────────────────────────────────────────── */
@@ -797,14 +957,7 @@ function readSheetAsRecords(sheetName, requiredColumnNames) {
 
   const sheetValues = optionalSheet.getRange(1, 1, lastRowIndex, lastColumnIndex).getValues();
   const headerRow = sheetValues[0];
-
-  const columnIndexByName = {};
-  headerRow.forEach(function (columnName, columnIndex) {
-    const normalizedName = String(columnName).trim();
-    if (normalizedName !== '' && columnIndexByName[normalizedName] === undefined) {
-      columnIndexByName[normalizedName] = columnIndex;
-    }
-  });
+  const columnIndexByName = buildColumnIndex(headerRow);
 
   const dataRows = sheetValues.slice(1).filter(function (row) {
     return row.some(function (cellValue) {
@@ -813,14 +966,44 @@ function readSheetAsRecords(sheetName, requiredColumnNames) {
   });
 
   return dataRows.map(function (dataRow) {
-    const record = {};
-
-    for (const columnName in columnIndexByName) {
-      record[columnName] = dataRow[columnIndexByName[columnName]];
-    }
-
-    return record;
+    return mapRowToRecord(dataRow, columnIndexByName);
   });
+}
+
+/**
+ * Підписи колонок у індекси. Порядок стовпців у таблиці неважливий.
+ *
+ * @param {Array<unknown>} headerRow
+ * @returns {Record<string, number>}
+ */
+function buildColumnIndex(headerRow) {
+  const columnIndexByName = {};
+
+  headerRow.forEach(function (columnName, columnIndex) {
+    const normalizedName = String(columnName).trim();
+    if (normalizedName !== '' && columnIndexByName[normalizedName] === undefined) {
+      columnIndexByName[normalizedName] = columnIndex;
+    }
+  });
+
+  return columnIndexByName;
+}
+
+/**
+ * Розкладає один рядок за підписами колонок.
+ *
+ * @param {Array<unknown>} dataRow
+ * @param {Record<string, number>} columnIndexByName
+ * @returns {Record<string, unknown>}
+ */
+function mapRowToRecord(dataRow, columnIndexByName) {
+  const record = {};
+
+  for (const columnName in columnIndexByName) {
+    record[columnName] = dataRow[columnIndexByName[columnName]];
+  }
+
+  return record;
 }
 
 /**

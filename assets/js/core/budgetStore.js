@@ -26,6 +26,7 @@ import {
   saveCachedSnapshot,
   savePendingEntries,
 } from "./localStore.js";
+import { currentPeriodKey, shiftPeriodKey } from "../domain/period.js";
 
 /** Гість — стан до того, як користувач увійшов. */
 const ANONYMOUS_VIEWER = { name: "", color: "#8b95a8" };
@@ -41,6 +42,17 @@ const RETRYABLE_ERROR_CODES = [
   API_ERROR_CODE.serverError,
   API_ERROR_CODE.rateLimited,
 ];
+
+/**
+ * Скільки місяців тримаємо в пам'яті одночасно.
+ *
+ * Це запобіжник, а не план: зазвичай у пам'яті один-два місяці.
+ * Рости починається лише тоді, коли хтось перемикається назад по
+ * роках. Без межі список місяців перевищив би ліміт сервера, і
+ * тоді перестав би працювати сам додаток — будь-який запис
+ * падав би з помилкою.
+ */
+const MAX_LOADED_PERIODS = 12;
 
 /** @param {unknown} error */
 function isWorthRetrying(error) {
@@ -63,6 +75,58 @@ function isWorthRetrying(error) {
 function isSessionExpired(error) {
   return error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired;
 }
+
+/**
+ * @param {object} transaction
+ * @returns {string} ключ місяця операції, «2026-10»
+ */
+function periodKeyOf(transaction) {
+  return String(transaction?.occurredOn ?? "").slice(0, 7);
+}
+
+/**
+ * Які саме місяці прийшли в знімку.
+ *
+ * Новий сервер називає їх сам — це точніше за будь-який вивід із
+ * дат, бо місяць без операцій інакше виглядав би як «не завантажено».
+ * Старший сервер цього поля не має, тоді беремо місяці з дат.
+ *
+ * @param {object} snapshot
+ * @returns {Array<string>}
+ */
+function readCoveredPeriods(snapshot) {
+  if (Array.isArray(snapshot.periods) && snapshot.periods.length > 0) return snapshot.periods;
+  return [...new Set((snapshot.transactions ?? []).map(periodKeyOf))];
+}
+
+/**
+ * Лишаємо не більше ніж `limit` місяців.
+ *
+ * Обов'язково втримуємо `mustKeep` — інакше панелі могли б назавжди
+ * залишитися на «Завантаження місяця…»: запит приніс би потрібний
+ * місяць і тут же викинув його за межу, бо в пам'яті вже дванадцять
+ * новіших. Решту добираємо найновішими — на них дивляться чаще.
+ *
+ * Забутий місяць не втрачається назавжди: коли його відкриють
+ * знову, звичайний запит принесе його за три секунди.
+ *
+ * @param {Array<string>} periodKeys
+ * @param {Array<string>} mustKeep
+ * @param {number} limit
+ * @returns {Array<string>}
+ */
+function trimToLimit(periodKeys, mustKeep, limit) {
+  if (periodKeys.length <= limit) return periodKeys;
+
+  const kept = new Set(mustKeep);
+  const others = periodKeys.filter((periodKey) => !kept.has(periodKey)).sort();
+
+  for (const periodKey of others.slice(-Math.max(0, limit - kept.size))) {
+    kept.add(periodKey);
+  }
+
+  return [...kept];
+}
 /** Незмінний початковий стан — до нього повертаємось при помилці. */
 function createInitialState() {
   return {
@@ -72,6 +136,13 @@ function createInitialState() {
     categories: FALLBACK_CATEGORIES,
     /** @type {Array<object>} */
     transactions: [],
+    /**
+     * @type {Array<string>} місяці «РРРР-ММ», дані яких уже в пам'яті
+     *
+     * Тримаємо не всю історію, а лише відкриті місяці: на п'ятирічній
+     * історії це два десятки кілобайт замість двох мегабайтів.
+     */
+    loadedPeriods: [],
     /** @type {Array<object>} дії, які ще не дійшли до сервера */
     pendingEntries: loadPendingEntries(null),
     /** @type {string} ISO-час останньої успішної синхронізації */
@@ -99,6 +170,10 @@ class BudgetStore {
   #sessionLogin = null;
   /** @type {Promise<void> | null} відправка, яка вже триває */
   #flushPromise = null;
+  /** @type {Set<string>} місяці, які зараз завантажуються */
+  #loadingPeriods = new Set();
+  /** @type {string | null} місяць, який користувач дивиться зараз */
+  #activePeriodKey = null;
   /**
    * Токен завжди йде з логіном: вони визначають, чию чергу
    * ми читаємо і чиї записи відправляємо.
@@ -146,6 +221,9 @@ class BudgetStore {
       viewer: cachedSnapshot.viewer ?? ANONYMOUS_VIEWER,
       categories: cachedSnapshot.categories?.length ? cachedSnapshot.categories : FALLBACK_CATEGORIES,
       transactions: cachedSnapshot.transactions ?? [],
+      loadedPeriods: Array.isArray(cachedSnapshot.loadedPeriods)
+        ? cachedSnapshot.loadedPeriods
+        : readCoveredPeriods(cachedSnapshot),
       lastSyncedAt: cachedSnapshot.lastSyncedAt,
       pendingEntries: loadPendingEntries(this.#sessionLogin),
     });
@@ -218,10 +296,11 @@ class BudgetStore {
       });
 
       try {
+        const periods = this.#requestedPeriods();
         const response =
           nextQueuedEntry.action === "delete"
-            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId)
-            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction);
+            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId, periods)
+            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction, periods);
 
         this.#applySnapshot(response.snapshot);
         this.#removeFromQueue(nextQueuedEntry.id);
@@ -241,12 +320,99 @@ class BudgetStore {
 
   /** @returns {Promise<void>} */
   async #reloadSnapshot() {
-    this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken));
+    this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods()));
+  }
+
+  /**
+   * Місяці, які хочемо отримати від сервера: ті, що вже в пам'яті.
+   *
+   * Запит лише цих місяців — інакше серверний знімок витер би те,
+   * що ми вже завантажили. Коли пам'ять порожня (перший вхід у
+   * цій сесії), беремо поточний місяць.
+   *
+   * Обраний місяць додається окремо: він мусить бути на екрані, на
+   *вітьмуть тощо — навіть якщо його витіснив з пам'яті власний запит.
+   *
+   * @returns {Array<string>}
+   */
+  #requestedPeriods() {
+    const loadedPeriods = this.#state.loadedPeriods;
+    if (loadedPeriods.length === 0) return [currentPeriodKey()];
+
+    if (!this.#activePeriodKey || loadedPeriods.includes(this.#activePeriodKey)) {
+      return loadedPeriods;
+    }
+
+    return trimToLimit(
+      [...loadedPeriods, this.#activePeriodKey],
+      [this.#activePeriodKey],
+      MAX_LOADED_PERIODS,
+    );
+  }
+
+  /**
+   * Запам'ятовує, який місяць користувач дивиться.
+   *
+   * Це единий спосіб, яким сторінка впливає на те, які місяці
+   * переживають обмеження пам'яті: відкритий місяць не можна
+   * викинути, бо інакше панелі назавжди залишаться порожніми.
+   *
+   * @param {string} periodKey — «2026-10»
+   */
+  setActivePeriod(periodKey) {
+    this.#activePeriodKey = periodKey;
+  }
+
+  /**
+   * Чи вже є дані за цей місяць.
+   * @param {string} periodKey — «2026-10»
+   */
+  isPeriodLoaded(periodKey) {
+    return this.#state.loadedPeriods.includes(periodKey);
+  }
+
+  /**
+   * Догружає місяць, якого ще немає в пам'яті.
+   *
+   * Береться місяць і попередній: попередній потрібен для
+   * «динаміки до попереднього місяця». Уже завантажений місяць
+   * повторно не запитується — за цю сесію він вже в пам'яті.
+   *
+   * @param {string} periodKey — «2026-10»
+   * @returns {Promise<void>}
+   */
+  async loadPeriod(periodKey) {
+    if (this.isPeriodLoaded(periodKey)) return;
+    if (!this.#sessionToken) return;
+
+    // Подвійний клік по «назад» не має породжувати два запити:
+    // другий місяць часто вже їде у відповіді на перший.
+    if (this.#loadingPeriods.has(periodKey)) return;
+    this.#loadingPeriods.add(periodKey);
+
+    this.#patch({ syncState: SYNC_STATE.loading });
+
+    try {
+      const snapshot = await fetchBudgetSnapshot(this.#sessionToken, [
+        periodKey,
+        shiftPeriodKey(periodKey, -1),
+      ]);
+      this.#applySnapshot(snapshot);
+      this.#patchSyncStateFromQueue();
+    } catch (error) {
+      this.#handleSyncError(error);
+    } finally {
+      this.#loadingPeriods.delete(periodKey);
+    }
   }
 
   /**
    * Застосовує знімок, надісланий разом із відповіддю на дію —
    * так минає другий запит і близько 3 секунди.
+   *
+   * Знімок покриває тільки записані в ньому місяці, тому операції
+   * за інші місяці залишаються на місці: додали запис у квітні, а
+   * відкритий березень не зникає.
    *
    * Якщо сервер знімка не повернув (наприклад, задеплоєна старіша
    * версія скрипта) — перечитуємо окремим запитом, щоб не ламалася.
@@ -256,10 +422,39 @@ class BudgetStore {
   #applySnapshot(snapshot) {
     if (!snapshot) return false;
 
+    const coveredPeriods = readCoveredPeriods(snapshot);
+    if (coveredPeriods.length === 0) return false;
+
+    const snapshotTransactions = snapshot.transactions ?? [];
+    const knownIds = new Set(snapshotTransactions.map((transaction) => transaction.id));
+
+    // Решта місяців лишається як є. Несинхронізовані записи
+    // переживають навіть тоді, коли їхній місяць прийшов у знімку:
+    // сервер про них ще не знає, тож замінити їх нічим не можна.
+    const keptTransactions = this.#state.transactions.filter((transaction) => {
+      if (!coveredPeriods.includes(periodKeyOf(transaction))) return true;
+      return transaction.pending === true && !knownIds.has(transaction.id);
+    });
+
+    const loadedPeriods = trimToLimit(
+      [...new Set([...this.#state.loadedPeriods, ...coveredPeriods])],
+      [this.#activePeriodKey, ...coveredPeriods].filter((periodKey) => Boolean(periodKey)),
+      MAX_LOADED_PERIODS,
+    );
+
+    // Дані місяців, що випали з пам'яті, прибираємо разом із ними:
+    // інакше вони лишилися б лежати в кеші без причини, а прапор
+    // «завантажений» брехав би.
+    const transactions = [...keptTransactions, ...snapshotTransactions].filter(
+      (transaction) =>
+        transaction.pending === true || loadedPeriods.includes(periodKeyOf(transaction)),
+    );
+
     const nextState = {
       viewer: snapshot.viewer ?? ANONYMOUS_VIEWER,
       categories: snapshot.categories?.length ? snapshot.categories : FALLBACK_CATEGORIES,
-      transactions: snapshot.transactions ?? [],
+      transactions,
+      loadedPeriods,
       lastSyncedAt: new Date().toISOString(),
     };
 
