@@ -1,9 +1,10 @@
 /**
- * accessGate.js — екран входу за кодом доступу.
+ * accessGate.js — екран входу за логіном і паролем.
  *
- * Код не зберігається у репозиторії: користувач вводить його один раз,
- * він живе в localStorage цього браузера і перевіряється сервером.
- * Так публічна адреса Apps Script сама по собі нічого не дає.
+ * Пароль не залишає браузер: він перетворюється на хеш ще до
+ * запиту (див. domain/crypto.js), а браузер зберігає лише підписаний
+ * сервером токен сесії. Тому публічна адреса Apps Script сама по
+ * собі нічого не дає — треба ще й пароль.
  */
 
 import { ApiError, API_ERROR_CODE } from "../core/apiClient.js";
@@ -14,13 +15,14 @@ const COUNTDOWN_TICK_MS = 1000;
 
 /**
  * @param {object} dependencies
- * @param {(accessToken: string) => Promise<void>} dependencies.onUnlock
+ * @param {(credentials: { login: string, password: string }) => Promise<void>} dependencies.onUnlock
  * @param {() => void} dependencies.onUnlockFailed
  */
 export function initAccessGate({ onUnlock, onUnlockFailed }) {
   const gateElement = findById("accessGate");
   const gateFormElement = findById("accessGateForm");
-  const accessTokenInputElement = findById("accessTokenInput");
+  const loginInputElement = findById("loginInput");
+  const passwordInputElement = findById("passwordInput");
   const gateErrorElement = findById("accessGateError");
   const gateSubmitButtonElement = findById("accessGateSubmit");
   const gateCountdownElement = findById("accessGateCountdown");
@@ -30,9 +32,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
   /** Таймер зворотного відліку, доки сервер тримає вхід заблокованим. */
   let countdownTimerHandle = null;
 
-  /**
-   * @param {boolean} isUnlocked
-   */
+  /** @param {boolean} isUnlocked */
   function render(isUnlocked) {
     setVisibility(gateElement, !isUnlocked);
     if (isUnlocked) {
@@ -42,7 +42,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
 
     setVisibility(registrationFormElement, false);
     setVisibility(gateFormElement, true);
-    accessTokenInputElement.focus();
+    loginInputElement.focus();
   }
 
   /** @param {string} message */
@@ -55,8 +55,6 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
   function clearError() {
     setVisibility(gateErrorElement, false);
     stopCountdown();
-    gateSubmitButtonElement.disabled = false;
-    accessTokenInputElement.disabled = false;
   }
 
   /**
@@ -67,7 +65,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
     stopCountdown();
 
     let secondsLeft = Math.max(Math.ceil(totalSeconds), 0);
-    accessTokenInputElement.disabled = true;
+    passwordInputElement.disabled = true;
     gateSubmitButtonElement.disabled = true;
     setVisibility(gateCountdownElement, true);
 
@@ -100,16 +98,18 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
 
     setVisibility(gateCountdownElement, false);
     gateSubmitButtonElement.disabled = false;
-    accessTokenInputElement.disabled = false;
+    passwordInputElement.disabled = false;
   }
 
   on(gateFormElement, "submit", async (event) => {
     event.preventDefault();
     if (gateSubmitButtonElement.disabled) return;
 
-    const enteredToken = accessTokenInputElement.value.trim();
-    if (!enteredToken) {
-      showError("Введіть код доступу.");
+    const enteredLogin = loginInputElement.value.trim();
+    const enteredPassword = passwordInputElement.value;
+
+    if (!enteredLogin || !enteredPassword) {
+      showError("Введіть логін і пароль.");
       return;
     }
 
@@ -118,10 +118,14 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
     gateSubmitButtonElement.textContent = "Перевіряємо…";
 
     try {
-      await onUnlock(enteredToken);
+      await onUnlock({ login: enteredLogin, password: enteredPassword });
+      passwordInputElement.value = "";
     } catch (error) {
       handleUnlockError(error);
     } finally {
+      // Кнопку не відновлюємо тут навмисно: коли сервер щойно
+      // заблокував вхід, форма має лишатися заблокованою.
+      // У всіх інших випадках її розблокує handleUnlockError.
       gateSubmitButtonElement.textContent = "Увійти";
     }
   });
@@ -129,7 +133,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
   /** @param {unknown} error */
   function handleUnlockError(error) {
     if (error instanceof ApiError && error.code === API_ERROR_CODE.rateLimited) {
-      showError("Забагато спроб із невірним кодом.");
+      showError("Забагато спроб із невірним паролем.");
       startCountdown(error.getRetryAfterSeconds() ?? 900);
       return;
     }
@@ -140,7 +144,9 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
 
     if (error instanceof ApiError && error.code === API_ERROR_CODE.unauthorized) {
       onUnlockFailed();
-      showError("Код не підходить. Перевірте його в аркуші Users.");
+      showError("Невірний логін або пароль.");
+      passwordInputElement.value = "";
+      passwordInputElement.focus();
       return;
     }
 
@@ -151,8 +157,9 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
   function revealAgain(message) {
     clearError();
     showError(message);
-    accessTokenInputElement.value = "";
-    accessTokenInputElement.focus();
+    loginInputElement.value = "";
+    passwordInputElement.value = "";
+    loginInputElement.focus();
     render(false);
   }
 

@@ -6,13 +6,8 @@
  *   doPost(action=addTransaction)   — додає операцію;
  *   doPost(action=deleteTransaction)— видаляє операцію.
  *
- * АВТОРИЗАЦІЯ
- * Користувач вводить свій код доступу. Сервер знаходить у аркуші `Users`
- * рядок, у якому хеш цього коду збігається, і бере ім'я звідти.
- * Від цього імені буде заповнюватися таблиця
- *
- * У таблиці зберігається не сам код, а SHA-256(сіль + код).
- * Тому хто має доступ до таблиці — не бачить чужих паролів.
+ * Авторизація та сесії — в auth.gs: там пароль не залишає браузер,
+ * а браузер зберігає лише підписаний сервером токен.
  *
  * ВАЖЛИВО про розгортання:
  *   Execute as:  Me (власник)
@@ -46,37 +41,34 @@ const HEADER_CATEGORY_LIMIT = 'Ліміт, ₴';
 
 const HEADER_USER_NAME = 'Ім\'я';
 const HEADER_USER_COLOR = 'Колір';
-const HEADER_USER_SALT = 'Сіль';
-const HEADER_USER_ACCESS_HASH = 'Код доступу';
+const HEADER_USER_PASSWORD_HASH = 'Пароль';
 const HEADER_USER_ACTIVE = 'Активний';
+
+/*
+ * Колонки, без яких аркуш не має сенсу.
+ *
+ * Проєкт без зворотної сумісності, тому «стара схема» не підтримується.
+ * Натомість кожна зміна повинна валитися одразу й голосно: якщо
+ * хтось перейменує колонку, краще явна помилка в журналі, ніж
+ * бюджет, який тихо показує нулі. Саме на цьому тричі вже
+ * ледь не втратили дані.
+ */
+const REQUIRED_TRANSACTION_COLUMNS = [
+  HEADER_ID, HEADER_DATE, HEADER_KIND, HEADER_CATEGORY,
+  HEADER_AMOUNT, HEADER_USER, HEADER_NOTE, HEADER_RECORDED_AT,
+];
+
+const REQUIRED_CATEGORY_COLUMNS = [
+  HEADER_CATEGORY_NAME, HEADER_CATEGORY_KIND, HEADER_CATEGORY_ICON,
+  HEADER_CATEGORY_COLOR, HEADER_CATEGORY_LIMIT,
+];
+
+const REQUIRED_USER_COLUMNS = [
+  HEADER_USER_NAME, HEADER_USER_COLOR, HEADER_USER_PASSWORD_HASH, HEADER_USER_ACTIVE,
+];
 
 const KIND_EXPENSE = 'Витрата';
 const KIND_INCOME = 'Дохід';
-
-/* ── Захист від перебору ────────────────────────────────────────────────── */
-
-/**
- * Скільки невдалих спроб поспіль допускаємо до блокування.
- *
- * Лічильник спільний на всіх: до перевірки ще невідомо, чий код
- * намагаються ввести.
- *
- * Блокування перевіряється ДО будь-якого порівняння хешів, тому
- * після спрацювання відсікаються всі запити - включно з правильним
- * кодом. Перебір з ~144 000 спроб на добу падає до 480: у 300 разів.
- * За тиждень автоматичний підбір не встигає нічого.
- *
- * Побічний ефект теж корисний: якщо раптом ніхто з сім'ї не може
- * увійти, значить або хтось систематично помиляється, або до таблиці
- * стукає сторонній.
- */
-const MAX_FAILED_ATTEMPTS = 5;
-
-/** На скільки хвилин блокується вхід після цих спроб. */
-const LOCKOUT_DURATION_MINUTES = 15;
-
-/** Ключ у PropertiesService, де живе лічильник спроб. */
-const ATTEMPT_STATE_KEY = 'moneyflow.loginAttempts';
 
 /* ── Самостійна реєстрація ──────────────────────────────────────────────── */
 
@@ -88,9 +80,6 @@ const ATTEMPT_STATE_KEY = 'moneyflow.loginAttempts';
  */
 const MAX_TOTAL_USERS = 10;
 const MAX_PENDING_USERS = 3;
-
-/** Мінімальна довжина коду, який обрав собі користувач. */
-const MIN_ACCESS_TOKEN_LENGTH = 10;
 
 const FLAG_ACTIVE = 'Так';
 const FLAG_INACTIVE = 'Ні';
@@ -105,23 +94,45 @@ const USER_AVATAR_COLORS = [
 
 /**
  * Єдиний вхід для всіх дій: маршрутизація за полем `action`.
- * Окремого doGet немає навмисно — код доступу не повинен потрапляти
- * в URL, бо URL потрапляє в логи сервера, історію браузера й Referer.
+ *
+ * Окремого doGet немає навмисно — токен не повинен потрапляти в URL,
+ * бо URL потрапляє в логи сервера, історію браузера й Referer.
  *
  * @param {Object} request
  * @returns {TextOutput} JSON
  */
 function doPost(request) {
   try {
-    const payload = JSON.parse(request.postData.contents);
+    if (!request.postData || !request.postData.contents) {
+      throw new RequestError('Порожній запит', 'BAD_REQUEST');
+    }
 
-    // Реєстрація - єдина дія без коду доступу: інакше нікому
-    // не було б сенсу заводити акаунт.
+    let payload;
+    try {
+      payload = JSON.parse(request.postData.contents);
+    } catch {
+      throw new RequestError('Тіло запиту — не коректний JSON', 'BAD_REQUEST');
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new RequestError('Очікувався об’єкт із полем action', 'BAD_REQUEST');
+    }
+
+    if (typeof payload.action !== 'string' || payload.action === '') {
+      throw new RequestError('Не вказано дію', 'BAD_REQUEST');
+    }
+
+    // Дві дії без сесії: вхід за паролем і реєстрація. Інакше
+    // завести акаунт або отримати сесію було б неможливо.
     if (payload.action === 'requestRegistration') {
       return respondWithJson(Object.assign({ ok: true }, createPendingUser(payload)));
     }
 
-    const viewer = authenticateUser(payload.accessToken);
+    if (payload.action === 'authenticate') {
+      return respondWithJson(Object.assign({ ok: true }, authenticateByCredentials(payload)));
+    }
+
+    const viewer = authenticateSession(payload.sessionToken);
 
     switch (payload.action) {
       case 'loadSnapshot':
@@ -130,7 +141,7 @@ function doPost(request) {
       case 'addTransaction':
         return respondWithJson({
           ok: true,
-          transaction: appendTransaction(payload.transaction || {}, viewer),
+          transaction: appendTransaction(payload.transaction, viewer),
           // Повертаємо оновлені дані одразу: інакше клієнту
           // довелося б робити другий запит і чекати ще ~3 секунди.
           snapshot: buildSnapshot(viewer),
@@ -140,7 +151,7 @@ function doPost(request) {
         deleteTransactionById(payload.transactionId);
         return respondWithJson({
           ok: true,
-          deletedId: payload.transactionId,
+          deletedId: String(payload.transactionId || '').trim(),
           snapshot: buildSnapshot(viewer),
         });
 
@@ -170,67 +181,60 @@ function buildSnapshot(viewer) {
 /* ── Авторизація ─────────────────────────────────────────────────────────── */
 
 /**
- * @typedef {{ name: string, color: string, salt: string, accessTokenHash: string, isActive: boolean }} BudgetUser
+ * @typedef {{ name: string, color: string, passwordHash: string, isActive: boolean }} BudgetUser
  */
 
 /**
- * Шукає користувача, чий код доступу збігається з поданим.
+ * Ядро сесій: перевірка токена й пошук користувача.
+ * Сам пароль не приходить на сервер у жодному запиті - тільки токен.
  *
- * @param {string} providedAccessToken
- * @returns {BudgetUser}
+ * @param {string} sessionToken
+ * @returns {{ name: string, color: string, passwordHash: string, isActive: boolean }}
  */
-function authenticateUser(providedAccessToken) {
-  ensureLoginIsNotBlocked();
+function authenticateSession(sessionToken) {
+  const tokenPayload = verifySessionToken(sessionToken);
+  const user = findUserByLogin(tokenPayload.login);
 
-  const submittedToken = String(providedAccessToken || '').trim();
-  if (submittedToken === '') {
-    throw new RequestError('Введіть код доступу', 'UNAUTHORIZED');
+  if (!user) {
+    throw new RequestError('Користувача більше немає в таблиці', 'UNAUTHORIZED');
   }
 
-  const users = readUsers();
-  if (users.length === 0) {
-    throw new RequestError('У таблиці не заведено жодного користувача', 'SERVER_ERROR');
+  // Активність перевіряється щоразу, тому вимкненого користувача
+  // відсікає миттєво, а не наприкінці терміну токена.
+  if (!user.isActive) {
+    throw new RequestError('Акаунт деактивовано', 'UNAUTHORIZED');
   }
 
-  for (const user of users) {
-    if (hashAccessToken(submittedToken, user.salt) !== user.accessTokenHash) continue;
+  // Токен, виданий до зміни пароля, більше не приймається.
+  const loginState = readLoginState()[user.name] || {};
+  const credentialsChangedAtMs = loginState.credentialsChangedAtMs || 0;
 
-    // Код правильний, але акаунт ще не увімкнутий. Кажемо прямо,
-    // щоб людина не думала, що ввела неправильний пароль.
-    if (!user.isActive) {
-      throw new RequestError(
-        'Акаунт створено, але ще не активовано. Адміністратор має увімкнути його в таблиці.',
-        'UNAUTHORIZED',
-      );
-    }
-
-    clearFailedAttempts();
-    return user;
+  if (tokenPayload.issuedAt < credentialsChangedAtMs) {
+    throw new RequestError('Пароль змінено. Увійдіть знову.', 'UNAUTHORIZED');
   }
 
-  registerFailedAttempt();
-
-  console.warn('Спроба входу з невірним кодом доступу о ' + new Date().toISOString());
-  throw new RequestError('Код доступу не підходить', 'UNAUTHORIZED');
+  return user;
 }
 
 /**
  * Створює заявку на користувача. Пароль ніде не зберігається -
- * лише SHA-256(сіль + пароль). Аккаунт одразу неактивний: увійти
- * може тільки той, хто має доступ до таблиці й увімкнув рядок.
+ * лише його хеш. Аккаунт одразу неактивний: увійти може тільки
+ * той, хто має доступ до таблиці й увімкнув рядок.
  *
- * @param {{ name: string, password: string }} payload
- * @returns {{ name: string, isActive: boolean }}
+ * @param {{ login: string, passwordHash: string }} payload
+ * @returns {{ login: string, isActive: boolean }}
  */
 function createPendingUser(payload) {
-  const userName = String(payload.name || '').trim();
-  const userPassword = String(payload.password || '').trim();
+  const userLogin = String(payload.login || '').trim();
+  const userPasswordHash = String(payload.passwordHash || '').trim();
 
-  if (userName.length < 2 || userName.length > 40) {
-    throw new RequestError('Ім\'я має бути від 2 до 40 символів', 'BAD_REQUEST');
+  if (userLogin.length < 2 || userLogin.length > 40) {
+    throw new RequestError('Логін має бути від 2 до 40 символів', 'BAD_REQUEST');
   }
 
-  requireStrongAccessToken(userPassword);
+  if (!isSha256Hex(userPasswordHash)) {
+    throw new RequestError('Не вдалося прочитати хеш пароля', 'BAD_REQUEST');
+  }
 
   const existingUsers = readUsers();
 
@@ -249,26 +253,33 @@ function createPendingUser(payload) {
     );
   }
 
-  const isNameTaken = existingUsers.some(function (user) {
-    return user.name.toLowerCase() === userName.toLowerCase();
-  });
-  if (isNameTaken) {
-    throw new RequestError('Таке ім\'я вже зайняте', 'BAD_REQUEST');
+  if (findUserByLogin(userLogin)) {
+    throw new RequestError('Такий логін вже зайнятий', 'BAD_REQUEST');
   }
 
-  const salt = generateSalt();
+  insertUserRecord({
+    login: userLogin,
+    passwordHash: userPasswordHash,
+    color: pickRandomAvatarColor(),
+    isActive: false,
+  });
 
-  getRequiredSheet(SHEET_USERS).appendRow([
-    userName,
-    pickRandomAvatarColor(),
-    salt,
-    hashAccessToken(userPassword, salt),
-    FLAG_INACTIVE,
-  ]);
+  console.log('Нова заявка на користувача: ' + userLogin + ' о ' + new Date().toISOString());
 
-  console.log('Нова заявка на користувача: ' + userName + ' о ' + new Date().toISOString());
+  return { login: userLogin, isActive: false };
+}
 
-  return { name: userName, isActive: false };
+/**
+ * Чи це хеш SHA-256 у шістнадцятковому записі.
+ *
+ * Єдина перевірка, яку сервер може зробити з паролем на реєстрації:
+ * сам пароль сюди не доходить — приходить уже хеш.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isSha256Hex(value) {
+  return /^[0-9a-f]{64}$/.test(value);
 }
 
 /**
@@ -288,15 +299,17 @@ function setUserActive(userName, isActive) {
   if (trimmedName === '') throw new Error('Потрібне ім\'я');
 
   const usersSheet = getRequiredSheet(SHEET_USERS);
-  const activeColumnIndex = findColumnIndex(usersSheet, HEADER_USER_ACTIVE);
+  const usersHeader = readSheetHeader(usersSheet);
+  const indexByName = usersHeader.index;
 
-  if (activeColumnIndex === -1) {
-    throw new Error('В аркуші Users немає стовпця ' + HEADER_USER_ACTIVE);
-  }
+  requireSheetColumns(SHEET_USERS, indexByName, [HEADER_USER_NAME, HEADER_USER_ACTIVE]);
+
+  const activeColumnIndex = indexByName.get(HEADER_USER_ACTIVE.toLowerCase());
+  const nameColumnIndex = indexByName.get(HEADER_USER_NAME.toLowerCase());
 
   const lastRowIndex = usersSheet.getLastRow();
   const nameColumnValues = usersSheet
-    .getRange(2, findColumnIndex(usersSheet, HEADER_USER_NAME) + 1, lastRowIndex - 1, 1)
+    .getRange(2, nameColumnIndex + 1, lastRowIndex - 1, 1)
     .getValues();
 
   for (let offset = 0; offset < nameColumnValues.length; offset += 1) {
@@ -308,153 +321,47 @@ function setUserActive(userName, isActive) {
 
   throw new Error('Користувача «' + trimmedName + '» не знайдено');
 }
-
 /**
- * @typedef {{ failures: number, blockedUntil: string | null }} AttemptState
- */
-
-/** @returns {AttemptState} */
-function readAttemptState() {
-  const rawState = PropertiesService.getScriptProperties().getProperty(ATTEMPT_STATE_KEY);
-  if (!rawState) return { failures: 0, blockedUntil: null };
-
-  try {
-    const parsedState = JSON.parse(rawState);
-    return {
-      failures: Number(parsedState.failures) || 0,
-      blockedUntil: parsedState.blockedUntil || null,
-    };
-  } catch (error) {
-    // Пошкоджений стан не має ламати вхід — починаємо спочатку.
-    return { failures: 0, blockedUntil: null };
-  }
-}
-
-/** @param {AttemptState} attemptState */
-function saveAttemptState(attemptState) {
-  PropertiesService.getScriptProperties().setProperty(
-    ATTEMPT_STATE_KEY,
-    JSON.stringify(attemptState),
-  );
-}
-
-/**
- * Кидає помилку, якщо вхід заблоковано й час ще не минув.
- */
-function ensureLoginIsNotBlocked() {
-  const attemptState = readAttemptState();
-  if (!attemptState.blockedUntil) return;
-
-  const blockedUntilMs = new Date(attemptState.blockedUntil).getTime();
-  const remainingMs = blockedUntilMs - Date.now();
-
-  if (remainingMs <= 0) {
-    saveAttemptState({ failures: 0, blockedUntil: null });
-    return;
-  }
-
-  throw new RequestError(
-    'Забагато спроб із невірним кодом. Зачекайте ' + Math.ceil(remainingMs / 60000) + ' хв.',
-    'RATE_LIMITED',
-    { retryAfterSeconds: Math.ceil(remainingMs / 1000) },
-  );
-}
-
-/** Рахує невдалу спробу й вмикає блокування, коли їх вистачило. */
-function registerFailedAttempt() {
-  const attemptState = readAttemptState();
-  attemptState.failures += 1;
-
-  if (attemptState.failures >= MAX_FAILED_ATTEMPTS) {
-    attemptState.failures = 0;
-    attemptState.blockedUntil = new Date(
-      Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000,
-    ).toISOString();
-
-    console.warn('Вхід заблоковано на ' + LOCKOUT_DURATION_MINUTES + ' хв о ' + new Date().toISOString());
-  }
-
-  saveAttemptState(attemptState);
-}
-
-/** Скидає лічильник після успішного входу. */
-function clearFailedAttempts() {
-  saveAttemptState({ failures: 0, blockedUntil: null });
-}
-
-/**
- * Хеш коду з персональною сіллю. Сіль ускладнює підбір
- * і дозволяє мати однакові коди різним людям.
+ * Читає аркуш Users.
  *
- * @param {string} accessToken
- * @param {string} salt
- * @returns {string} base64
- */
-function hashAccessToken(accessToken, salt) {
-  const digest = Utilities.computeDigest(
-    Utilities.DigestAlgorithm.SHA_256,
-    salt + accessToken,
-    Utilities.Charset.UTF_8,
-  );
-  return Utilities.base64Encode(digest);
-}
-
-/**
+ * Без колонки «Активний» не можна зрозуміти, хто вже увімкнений,
+ * а хто лише зареєструвався. Без «Пароль» — немає з чим порівняти
+ * доказ входу. В обох випадках падаємо одразу й голосно: мовчаливий
+ * збій тут виглядав би як «невірний пароль», і людина шукала б
+ * проблему в своєму голові.
+ *
+ * Те саме стосується некоректного хеша: якщо в клітинці не 64
+ * символи шістнадцяткової, цей пароль не підійде ніколи — і без
+ * перевірки користувач не зрозуміє, чому не входить.
+ *
  * @returns {Array<BudgetUser>}
  */
 function readUsers() {
-  const usersSheet = getRequiredSheet(SHEET_USERS);
-
-  // Без колонки «Активний» не можна зрозуміти, хто вже увімкнений,
-  // а хто лише зареєструвався. Тихорто падаємо одразу й голосно:
-  // краще явна помилка в журналі, ніж пустий вхід у бюджет.
-  if (findColumnIndex(usersSheet, HEADER_USER_ACTIVE) === -1) {
-    throw new RequestError(
-      'В аркуші ' + SHEET_USERS + ' немає стовпця «' + HEADER_USER_ACTIVE +
-      '». Перезапустіть bootstrapSheets або додайте колонку вручну.',
-      'SERVER_ERROR',
-    );
-  }
-
-  return readSheetAsRecords(SHEET_USERS)
+  const users = readSheetAsRecords(SHEET_USERS, REQUIRED_USER_COLUMNS)
     .map(function (record) {
       return {
         name: String(record[HEADER_USER_NAME] || '').trim(),
         color: String(record[HEADER_USER_COLOR] || '#2563eb').trim(),
-        salt: String(record[HEADER_USER_SALT] || '').trim(),
-        accessTokenHash: String(record[HEADER_USER_ACCESS_HASH] || '').trim(),
+        passwordHash: String(record[HEADER_USER_PASSWORD_HASH] || '').trim(),
         isActive: isTruthyFlag(record[HEADER_USER_ACTIVE]),
       };
     })
     .filter(function (user) {
-      return user.name !== '' && user.salt !== '' && user.accessTokenHash !== '';
+      return user.name !== '' && user.passwordHash !== '';
     });
-}
 
-/**
- * Вимоги до коду доступу. Застосовуються і до самостійної реєстрації,
- * і до кодів, які заводить адміністратор - секрет один і той же,
- * тому правила мають бути однакові.
- *
- * @param {string} accessToken
- */
-function requireStrongAccessToken(accessToken) {
-  if (accessToken.length < MIN_ACCESS_TOKEN_LENGTH) {
+  for (const user of users) {
+    if (isSha256Hex(user.passwordHash)) continue;
+
     throw new RequestError(
-      'Пароль має містити щонайменше ' + MIN_ACCESS_TOKEN_LENGTH + ' символів',
-      'BAD_REQUEST',
+      'У користувача «' + user.name + '» у стовпці «' + HEADER_USER_PASSWORD_HASH +
+      '» некоректний хеш (' + user.passwordHash.length + ' символів замість 64). ' +
+      'Задайте пароль знову: resetUserPassword(\'' + user.name + '\', \'НовийПароль\');',
+      'SERVER_ERROR',
     );
   }
 
-  if (!/[a-z]/.test(accessToken)) {
-    throw new RequestError('Пароль має містити хоча б одну малу літеру', 'BAD_REQUEST');
-  }
-  if (!/[A-Z]/.test(accessToken)) {
-    throw new RequestError('Пароль має містити хоча б одну велику літеру', 'BAD_REQUEST');
-  }
-  if (!/\d/.test(accessToken)) {
-    throw new RequestError('Пароль має містити хоча б одну цифру', 'BAD_REQUEST');
-  }
+  return users;
 }
 
 /**
@@ -466,11 +373,6 @@ function isTruthyFlag(rawValue) {
   return ['так', 'yes', 'true', '1', 'y'].indexOf(normalizedValue) !== -1;
 }
 
-/** @returns {string} випадковий рядок із сіллю */
-function generateSalt() {
-  return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
-}
-
 /** @returns {string} колір аватарки з палітри */
 function pickRandomAvatarColor() {
   const randomIndex = Math.floor(Math.random() * USER_AVATAR_COLORS.length);
@@ -478,95 +380,71 @@ function pickRandomAvatarColor() {
 }
 
 /**
- * Дописує людину в аркуш Users разом із сіллю і хешем коду.
+ * Дописує людину в аркуш Users разом із хешем пароля.
  *
- * Це не серверна логіка — цю функцію запускають вручну з редактора
+ * Це не серверна логіка - цю функцію запускають вручну з редактора
  * Apps Script, коли в сім'ї з'являється новий користувач:
  *
- *   registerUser('Оля', '#7c3aed', 'oliia-2026');
+ *   registerUser('Оля', '#7c3aed', 'Grivna-2026');
  *
- * @param {string} userName — ім'я, яким підпишуться операції
+ * @param {string} userName — логін, за ним і користувач входить
  * @param {string} userColor — колір аватарки, hex
- * @param {string} userAccessToken — код, який ця людина вводить на сайті
+ * @param {string} userPassword — пароль, який ця людина вводить на сайті
  * @return {string} повідомлення з результатом (видно у виводі)
  */
-function registerUser(userName, userColor, userAccessToken) {
+function registerUser(userName, userColor, userPassword) {
   const trimmedName = String(userName || '').trim();
-  const trimmedToken = String(userAccessToken || '').trim();
+  const plainPassword = String(userPassword || '');
 
   if (trimmedName === '') {
     throw new Error('Потрібне ім\'я');
   }
 
-  requireStrongAccessToken(trimmedToken);
+  requireStrongPassword(plainPassword);
 
-  const usersSheet = getRequiredSheet(SHEET_USERS);
-  const salt = generateSalt();
+  if (findUserByLogin(trimmedName)) {
+    throw new Error('Користувач «' + trimmedName + '» уже існує.');
+  }
 
-  usersSheet.appendRow([
-    trimmedName,
-    String(userColor || pickRandomAvatarColor()).trim(),
-    salt,
-    hashAccessToken(trimmedToken, salt),
-    FLAG_ACTIVE,
-  ]);
+  insertUserRecord({
+    login: trimmedName,
+    passwordHash: hashText(plainPassword),
+    color: String(userColor || pickRandomAvatarColor()).trim(),
+    isActive: true,
+  });
 
-  const result = 'Користувач «' + trimmedName + '» доданий. Код доступу: ' + trimmedToken;
-  Logger.log(result);
-  return result;
+  Logger.log('Користувач «' + trimmedName + '» доданий.');
+  return 'Користувач «' + trimmedName + '» доданий.';
 }
 
 /**
- * Замінює код доступу вже заведеної людини. Нова сіль генерується
- * заново, тож старий хеш більше не підходить ні за що.
+ * Замінює пароль уже заведеної людини.
+ *
+ * Старі сесії при цьому перестають діяти: authenticateSession
+ * порівнює час видачі токена з часом зміни пароля.
  *
  * Так само запускається вручну з редактора:
  *
- *   resetUserAccessToken('Оля', 'novyi-kod');
+ *   resetUserPassword('Оля', 'Nova-Parily-2026');
  *
  * @param {string} userName
- * @param {string} newAccessToken
+ * @param {string} newPassword
  * @return {string} повідомлення з результатом
  */
-function resetUserAccessToken(userName, newAccessToken) {
+function resetUserPassword(userName, newPassword) {
   const trimmedName = String(userName || '').trim();
-  const trimmedToken = String(newAccessToken || '').trim();
+  const plainPassword = String(newPassword || '');
 
   if (trimmedName === '') {
     throw new Error('Потрібне ім\'я');
   }
 
-  requireStrongAccessToken(trimmedToken);
+  requireStrongPassword(plainPassword);
+  replaceUserPassword(trimmedName, plainPassword);
 
-  const usersSheet = getRequiredSheet(SHEET_USERS);
-  const nameColumnIndex = findColumnIndex(usersSheet, HEADER_USER_NAME);
-  const saltColumnIndex = findColumnIndex(usersSheet, HEADER_USER_SALT);
-  const hashColumnIndex = findColumnIndex(usersSheet, HEADER_USER_ACCESS_HASH);
-
-  if (nameColumnIndex === -1 || saltColumnIndex === -1 || hashColumnIndex === -1) {
-    throw new Error('У аркуші Users бракує потрібних стовпців');
-  }
-
-  const lastRowIndex = usersSheet.getLastRow();
-  const nameColumnValues = usersSheet
-    .getRange(2, nameColumnIndex + 1, lastRowIndex - 1, 1)
-    .getValues();
-
-  for (let offset = 0; offset < nameColumnValues.length; offset += 1) {
-    if (String(nameColumnValues[offset][0]).trim() !== trimmedName) continue;
-
-    const rowIndex = offset + 2;
-    const newSalt = generateSalt();
-
-    usersSheet.getRange(rowIndex, saltColumnIndex + 1).setValue(newSalt);
-    usersSheet.getRange(rowIndex, hashColumnIndex + 1).setValue(hashAccessToken(trimmedToken, newSalt));
-
-    const result = 'Код доступу для «' + trimmedName + '» змінено. Новий код: ' + trimmedToken;
-    Logger.log(result);
-    return result;
-  }
-
-  throw new Error('Користувача «' + trimmedName + '» не знайдено. Спершу registerUser.');
+  const result = 'Пароль для «' + trimmedName + '» змінено. Старі сесії завершено.';
+  Logger.log(result);
+  return result;
 }
 
 /**
@@ -583,11 +461,11 @@ function removeUser(userName) {
   if (trimmedName === '') throw new Error('Потрібне ім\'я');
 
   const usersSheet = getRequiredSheet(SHEET_USERS);
-  const nameColumnIndex = findColumnIndex(usersSheet, HEADER_USER_NAME);
+  const usersHeader = readSheetHeader(usersSheet);
+  const indexByName = usersHeader.index;
+  requireSheetColumns(SHEET_USERS, indexByName, [HEADER_USER_NAME]);
 
-  if (nameColumnIndex === -1) {
-    throw new Error('У аркуші Users немає стовпця ' + HEADER_USER_NAME);
-  }
+  const nameColumnIndex = indexByName.get(HEADER_USER_NAME.toLowerCase());
 
   const lastRowIndex = usersSheet.getLastRow();
   const nameColumnValues = usersSheet
@@ -608,7 +486,7 @@ function removeUser(userName) {
 
 /** @returns {Array<object>} */
 function readCategories() {
-  return readSheetAsRecords(SHEET_CATEGORIES)
+  return readSheetAsRecords(SHEET_CATEGORIES, REQUIRED_CATEGORY_COLUMNS)
     .map(function (record, index) {
       return {
         name: String(record[HEADER_CATEGORY_NAME] || '').trim(),
@@ -632,7 +510,7 @@ function readTransactions() {
   const transactions = [];
   let skippedRowsCount = 0;
 
-  for (const record of readSheetAsRecords(SHEET_TRANSACTIONS)) {
+  for (const record of readSheetAsRecords(SHEET_TRANSACTIONS, REQUIRED_TRANSACTION_COLUMNS)) {
     const amount = toPositiveNumber(record[HEADER_AMOUNT]);
     const occurredOn = toIsoDate(record[HEADER_DATE]);
 
@@ -668,6 +546,10 @@ function readTransactions() {
  * @returns {object} створена або вже наявна операція
  */
 function appendTransaction(payload, viewer) {
+  if (!payload || typeof payload !== 'object') {
+    throw new RequestError('Не передано дані операції', 'BAD_REQUEST');
+  }
+
   const amount = toPositiveNumber(payload.amount);
   const occurredOn = toIsoDate(payload.occurredOn);
 
@@ -683,11 +565,18 @@ function appendTransaction(payload, viewer) {
     throw new RequestError('Не вказано категорію', 'BAD_REQUEST');
   }
 
+  // Тип приїмаємо лише два машинні значення. normalizeKind уміє
+  // багато синонімів для читання з таблиці, але запит від клієнта
+  // має бути однозначним: невідомий тип — помилка, а не витрата
+  // за замовчуванням.
+  const transactionKind = requireKnownKind(payload.kind);
   const transactionId = String(payload.id || '').trim() || Utilities.getUuid();
-  const transactionKind = normalizeKind(payload.kind);
   const note = String(payload.note || '').trim().slice(0, 200);
 
   const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
+  const transactionsHeader = readSheetHeader(transactionsSheet);
+  const indexByName = transactionsHeader.index;
+  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
 
   // Обидва записи в таблицю і в відповідь клієнту.
   // У відповіді тип машинний: клієнт порівнює його з 'expense'/'income'.
@@ -706,7 +595,7 @@ function appendTransaction(payload, viewer) {
   // Клієнт генерує ID заздалегідь. Якщо запит дійшов двічі — після
   // обриву зв'язку та повторної відправки з черги — не дублюємо
   // рядок, а повертаємо те, що вже записано.
-  const existingRowIndex = findTransactionRowIndexById(transactionsSheet, transactionId);
+  const existingRowIndex = findTransactionRowIndexById(transactionsSheet, transactionId, indexByName);
   if (existingRowIndex !== -1) {
     return createdTransaction;
   }
@@ -720,7 +609,7 @@ function appendTransaction(payload, viewer) {
     viewer.name,
     note,
     new Date(),
-  ]);
+  ], transactionsHeader);
 
   return createdTransaction;
 }
@@ -730,14 +619,18 @@ function appendTransaction(payload, viewer) {
  *
  * @param {Sheet} transactionsSheet
  * @param {string} transactionId
- * @returns {number} номер рядка з нуля або -1
+ * @param {Map<string, number>} indexByName - індекс шапки, уже прочитаний
+ * @returns {number} номер рядка з одиниці або -1
+ * @throws {RequestError} якщо немає колонки з ID: мовчки вважати її
+ *   відсутньою означало б, що кожен повтор запиту пише дубль.
  */
-function findTransactionRowIndexById(transactionsSheet, transactionId) {
+function findTransactionRowIndexById(transactionsSheet, transactionId, indexByName) {
   const normalizedId = String(transactionId || '').trim();
   if (normalizedId === '') return -1;
 
-  const idColumnIndex = findColumnIndex(transactionsSheet, HEADER_ID);
-  if (idColumnIndex === -1) return -1;
+  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, [HEADER_ID]);
+
+  const idColumnIndex = indexByName.get(HEADER_ID.toLowerCase());
 
   const lastRowIndex = transactionsSheet.getLastRow();
   if (lastRowIndex < 2) return -1;
@@ -757,11 +650,43 @@ function findTransactionRowIndexById(transactionsSheet, transactionId) {
 }
 
 /**
+ * Тип операції з запиту клієнта: лише 'expense' або 'income'.
+ *
+ * normalizeKind навмисно приймає багато синонімів — щоб читати
+ * значення з таблиці очима. З клієнта ж приходить одне машинне
+ * значення, і невідоме тут означає помилку, а не тихе
+ * перетворення будь-чого на витрату.
+ *
+ * @param {unknown} rawValue
+ * @returns {string} KIND_EXPENSE або KIND_INCOME
+ * @throws {RequestError}
+ */
+function requireKnownKind(rawValue) {
+  const normalizedValue = String(rawValue || '').trim().toLowerCase();
+
+  if (normalizedValue === 'expense') return KIND_EXPENSE;
+  if (normalizedValue === 'income') return KIND_INCOME;
+
+  throw new RequestError(
+    'Невідомий тип операції: ' + rawValue + '. Очікується expense або income.',
+    'BAD_REQUEST',
+  );
+}
+
+/**
  * @param {string} transactionId
  */
 function deleteTransactionById(transactionId) {
+  const normalizedId = String(transactionId || '').trim();
+  if (normalizedId === '') {
+    throw new RequestError('Не передано ID операції', 'BAD_REQUEST');
+  }
+
   const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
-  const rowIndex = findTransactionRowIndexById(transactionsSheet, transactionId);
+  const transactionsHeader = readSheetHeader(transactionsSheet);
+  const indexByName = transactionsHeader.index;
+  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
+  const rowIndex = findTransactionRowIndexById(transactionsSheet, normalizedId, indexByName);
 
   if (rowIndex === -1) {
     throw new RequestError('Операцію з таким ID не знайдено', 'BAD_REQUEST');
@@ -773,15 +698,82 @@ function deleteTransactionById(transactionId) {
 /* ── Допоміжні функції роботи з таблицею ────────────────────────────────── */
 
 /**
+ * Индекс колонок аркуша: підпис (у нижньому регістрі) -> позиція.
+ *
+ * Читає шапку рівно один раз. Кожен getValues() - це виклик до
+ * Google, тому шапку треба брати один раз на аркуш, а не на кожну
+ * назву колонки: інакше перевірка восьми колонок коштує восьми
+ * однакових запитів.
+ *
+ * @param {Sheet} sheet
+ * @returns {{ row: Array<unknown>, index: Map<string, number> }}
+ */
+function readSheetHeader(sheet) {
+  return indexHeaderRow(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+}
+
+/**
+ * Те саме, але з уже прочитаного рядка шапки.
+ *
+ * @param {Array<unknown>} headerRow
+ * @returns {{ row: Array<unknown>, index: Map<string, number> }}
+ */
+function indexHeaderRow(headerRow) {
+  const indexByName = new Map();
+
+  headerRow.forEach(function (columnName, columnIndex) {
+    const normalizedName = String(columnName).trim().toLowerCase();
+    if (normalizedName !== '' && !indexByName.has(normalizedName)) {
+      indexByName.set(normalizedName, columnIndex);
+    }
+  });
+
+  return { row: headerRow, index: indexByName };
+}
+
+/**
+ * Падає, якщо в аркуші немає хоча б однієї з перелічених колонок.
+ *
+ * Нічого не читає: працює з індексом, який уже зібрано.
+ * Перевіряє одразу всі відсутні, а не першу нестачу: щоб не
+ * доводилося виправляти по одному стовпцю за три заходи.
+ *
+ * @param {string} sheetName
+ * @param {Map<string, number>} indexByName
+ * @param {Array<string>} columnNames
+ * @throws {RequestError}
+ */
+function requireSheetColumns(sheetName, indexByName, columnNames) {
+  const missingColumnNames = columnNames.filter(function (columnName) {
+    return !indexByName.has(columnName.trim().toLowerCase());
+  });
+
+  if (missingColumnNames.length > 0) {
+    throw new RequestError(
+      'В аркуші ' + sheetName + ' немає стовпців: ' + missingColumnNames.join(', ') + '. ' +
+      'Перейменуйте їх у шапці як у bootstrapSheets — сервер не читає старі схеми.',
+      'SERVER_ERROR',
+    );
+  }
+}
+
+/**
  * Читає аркуш у вигляді масиву об'єктів за підписами колонок.
  * Порядок колонок не важливий — важливі лише їхні назви.
  *
  * @param {string} sheetName
+ * @param {Array<string>} requiredColumnNames - перевіряються до читання
  * @returns {Array<Record<string, unknown>>}
  */
-function readSheetAsRecords(sheetName) {
+function readSheetAsRecords(sheetName, requiredColumnNames) {
   const optionalSheet = getOptionalSheet(sheetName);
   if (!optionalSheet) return [];
+
+  if (requiredColumnNames) {
+    // Шапку читаємо один раз і зразу використовуємо і для перевірки,
+    // і для розкладання записів далі.
+    requireSheetColumns(sheetName, readSheetHeader(optionalSheet).index, requiredColumnNames);
+  }
 
   const lastRowIndex = optionalSheet.getLastRow();
   const lastColumnIndex = optionalSheet.getLastColumn();
@@ -819,41 +811,37 @@ function readSheetAsRecords(sheetName) {
  * Додає рядок, попередньо переставивши значення відповідно
  * до підписів колонок у шапці.
  *
+ * Значення передаються в порядку шапки, а розкладаються за
+ * іменами колонок — тому порядок стовпців у таблиці неважливий.
+ *
  * @param {Sheet} sheet
  * @param {Array<unknown>} orderedValues
+ * @throws {Error} якщо якийсь підпис не знайдено: краще не записати
+ *   нічого, ніж записати хеш не в те стовпці, а в сусіднє.
  */
-function appendRowByColumnNames(sheet, orderedValues) {
-  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+function appendRowByColumnNames(sheet, orderedValues, header) {
+  const headerRow = (header || readSheetHeader(sheet)).row;
+  const knownColumns = header ? header.index : indexHeaderRow(headerRow).index;
   const valuesForSheetRow = new Array(headerRow.length).fill('');
 
   orderedValues.forEach(function (value, columnOffset) {
     const columnName = String(headerRow[columnOffset] || '').trim();
-    const targetColumnIndex = columnName ? findColumnIndex(sheet, columnName) : -1;
+    const normalizedName = columnName.toLowerCase();
+    const targetColumnIndex = knownColumns.has(normalizedName)
+      ? knownColumns.get(normalizedName)
+      : -1;
 
-    if (targetColumnIndex >= 0) {
-      valuesForSheetRow[targetColumnIndex] = value;
+    if (targetColumnIndex < 0) {
+      throw new Error(
+        'У аркуші ' + sheet.getName() + ' немає стовпця «' + columnName +
+        '». Нічого не записано — перевірте шапку.',
+      );
     }
+
+    valuesForSheetRow[targetColumnIndex] = value;
   });
 
   sheet.appendRow(valuesForSheetRow);
-}
-
-/**
- * @param {Sheet} sheet
- * @param {string} columnName
- * @returns {number} індекс з нуля або -1, якщо колонки немає
- */
-function findColumnIndex(sheet, columnName) {
-  const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const targetColumnName = columnName.trim().toLowerCase();
-
-  for (let columnIndex = 0; columnIndex < headerRow.length; columnIndex += 1) {
-    if (String(headerRow[columnIndex]).trim().toLowerCase() === targetColumnName) {
-      return columnIndex;
-    }
-  }
-
-  return -1;
 }
 
 /**

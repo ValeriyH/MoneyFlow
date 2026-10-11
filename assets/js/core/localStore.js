@@ -36,24 +36,63 @@ function writeJsonValue(storageKey, value) {
   }
 }
 
-/* ── Код доступу ─────────────────────────────────────────────────────────── */
-
-/** @returns {string | null} */
-export function loadAccessToken() {
-  return readJsonValue(STORAGE_KEYS.accessToken, null);
-}
-
-/** @param {string} accessToken */
-export function saveAccessToken(accessToken) {
-  writeJsonValue(STORAGE_KEYS.accessToken, accessToken);
-}
-
-export function forgetAccessToken() {
+/**
+ * @param {string} storageKey
+ * @returns {void}
+ */
+function removeValue(storageKey) {
   try {
-    window.localStorage.removeItem(STORAGE_KEYS.accessToken);
+    window.localStorage.removeItem(storageKey);
   } catch {
     /* приватний режим — немає чого видаляти */
   }
+}
+
+/* ── Сесія ───────────────────────────────────────────────────────────────── */
+
+/**
+ * @returns {string | null} підписаний сервером токен
+ */
+export function loadSessionToken() {
+  return readJsonValue(STORAGE_KEYS.sessionToken, null);
+}
+
+/** @param {string} sessionToken */
+export function saveSessionToken(sessionToken) {
+  writeJsonValue(STORAGE_KEYS.sessionToken, sessionToken);
+}
+
+export function forgetSessionToken() {
+  removeValue(STORAGE_KEYS.sessionToken);
+}
+
+/* ── Зсув годинника ─────────────────────────────────────────────────────── */
+
+/**
+ * Різниця між серверним і локальним часом у мс.
+ *
+ * Потрібна для доказу входу: він прив'язаний до часу, і без
+ * поправки телефон із хибним годинником не ввійде. Відповідь
+ * сервера — єдине джерело, звідки цю різницю можна взяти.
+ *
+ * @returns {number}
+ */
+export function loadClockOffset() {
+  const storedOffset = readJsonValue(STORAGE_KEYS.clockOffset, 0);
+  return typeof storedOffset === "number" && Number.isFinite(storedOffset) ? storedOffset : 0;
+}
+
+/** @param {number} offsetMs */
+export function saveClockOffset(offsetMs) {
+  writeJsonValue(STORAGE_KEYS.clockOffset, offsetMs);
+}
+
+/**
+ * Час «зараз» з урахуванням відомої різниці.
+ * @returns {number}
+ */
+export function currentServerAlignedTime() {
+  return Date.now() + loadClockOffset();
 }
 
 /* ── Черга несинхронізованих операцій ───────────────────────────────────── */
@@ -134,9 +173,5 @@ export function saveCachedSnapshot(snapshot) {
 }
 
 export function clearCachedSnapshot() {
-  try {
-    window.localStorage.removeItem(STORAGE_KEYS.cachedSnapshot);
-  } catch {
-    /* приватний режим */
-  }
+  removeValue(STORAGE_KEYS.cachedSnapshot);
 }

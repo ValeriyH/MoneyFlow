@@ -7,15 +7,18 @@
  */
 
 import { SYNC_STATE, isEnvironmentConfigured } from "./config.js";
-import { API_ERROR_CODE } from "./core/apiClient.js";
+import { API_ERROR_CODE, openSession } from "./core/apiClient.js";
 import { budgetStore } from "./core/budgetStore.js";
 import {
-  forgetAccessToken,
-  loadAccessToken,
+  currentServerAlignedTime,
+  forgetSessionToken,
+  loadSessionToken,
   loadActivePeriod,
-  saveAccessToken,
+  saveClockOffset,
+  saveSessionToken,
   saveActivePeriod,
 } from "./core/localStore.js";
+import { buildLoginProof, isCryptoAvailable } from "./domain/crypto.js";
 import { currentPeriodKey, shiftPeriodKey } from "./domain/period.js";
 import { initAccessGate } from "./ui/accessGate.js";
 import { initBudgetPanel } from "./ui/budgetPanel.js";
@@ -74,9 +77,11 @@ initLifecycleListeners();
 // ніж мовчки невдалі запити до undefined.
 if (!isEnvironmentConfigured()) {
   setVisibility(findById("unconfiguredGate"), true);
-} else if (loadAccessToken()) {
+} else if (!isCryptoAvailable()) {
+  setVisibility(findById("insecureContextGate"), true);
+} else if (loadSessionToken()) {
   budgetStore.hydrateFromCache();
-  budgetStore.setAccessToken(loadAccessToken());
+  budgetStore.setSessionToken(loadSessionToken());
   revealApplication();
   requestSync();
 } else {
@@ -93,6 +98,15 @@ async function requestSync() {
     const { syncState, syncMessage, syncErrorCode } = budgetStore.getState();
 
     if (syncErrorCode === API_ERROR_CODE.unauthorized) {
+      // Токен прострочений або пароль змінено: викидаємо його,
+      // інакше наступне відкриття знову піде в той самий відмовий запит.
+      budgetStore.setSessionToken(null);
+      forgetSessionToken();
+
+      // Застосунок ховаємо разом із gate: інакше під формою
+      // лишилися б старі витрати, які вже не синхронізуються.
+      setVisibility(appElement, false);
+      sessionState.isAppVisible = false;
       accessGate.revealAgain(syncMessage);
       return;
     }
@@ -107,29 +121,45 @@ async function requestSync() {
 }
 
 /**
- * @param {string} enteredAccessToken
+ * Обмін логіну й пароля на сесійний токен.
+ *
+ * Пароль не відправляється: браузер сам рахує доказ і лише його
+ * передає. Сервер відповідає підписаним токеном і своїм часом —
+ * останній потрібен, щоб наступний вхід правильно прив'язаний
+ * до часу, навіть якщо годинник пристрою кривий.
+ *
+ * @param {{ login: string, password: string }} credentials
  * @returns {Promise<void>}
  */
-async function unlockApplication(enteredAccessToken) {
-  budgetStore.setAccessToken(enteredAccessToken);
+async function unlockApplication({ login, password }) {
+  const requestTimestamp = currentServerAlignedTime();
+  const proof = await buildLoginProof(password, requestTimestamp);
+
+  const response = await openSession({ login, proof, timestamp: requestTimestamp });
+
+  saveClockOffset(response.serverTime - Date.now());
+  saveSessionToken(response.token);
+
+  budgetStore.setSessionToken(response.token);
 
   const hasSucceeded = await budgetStore.synchronize();
   if (!hasSucceeded) {
-    budgetStore.setAccessToken(null);
+    budgetStore.setSessionToken(null);
+    forgetSessionToken();
 
     // Прокидаємо саму помилку, а не її текст: екран входу має
-    // відрізнити «невірний код» від «забагато спроб».
+    // відрізнити «невірний пароль» від «забагато спроб».
     throw budgetStore.getState().lastSyncError
       ?? new Error("Не вдалося підключитися до таблиці. Спробуйте пізніше.");
   }
 
-  saveAccessToken(enteredAccessToken);
   revealApplication();
   showToast("Готово, бюджет підключено", "success");
 }
 
 function handleUnlockFailure() {
-  budgetStore.setAccessToken(null);
+  budgetStore.setSessionToken(null);
+  forgetSessionToken();
 }
 
 function revealApplication() {
@@ -219,11 +249,11 @@ function initPeriodSwitcher() {
   });
 
   on(logoutButtonElement, "click", () => {
-    if (!window.confirm("Забути код доступу на цьому пристрої? Записи в черзі залишаться.")) {
+    if (!window.confirm("Забути пароль на цьому пристрої? Записи в черзі залишаться.")) {
       return;
     }
 
-    forgetAccessToken();
+    forgetSessionToken();
     budgetStore.reset();
     window.location.reload();
   });
@@ -301,15 +331,15 @@ async function confirmAndRemoveTransaction(transaction) {
 
 /**
  * Профіль у шапці — це єдиний спосіб змінити користувача на пристрої.
- * Код доступу зберігається один, тому «виходу» в ньому немає:
- * щоб записати під іншою людиною, вводиться її код.
+ * Пароль зберігається один, тому «виходу» в ньому немає:
+ * щоб записати під іншою людиною, вводяться її логін і пароль.
  */
 function confirmUserSwitch() {
-  if (!window.confirm("Перейти на іншого користувача? Введи інший код доступу.")) {
+  if (!window.confirm("Перейти на іншого користувача? Введи його логін і пароль.")) {
     return;
   }
 
-  forgetAccessToken();
+  forgetSessionToken();
   budgetStore.reset();
   window.location.reload();
 }

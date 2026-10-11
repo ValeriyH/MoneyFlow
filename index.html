@@ -14,19 +14,27 @@
 </head>
 
 <body>
-  <!-- ── Екран входу: код доступу або реєстрація нового користувача ── -->
+  <!-- ── Екран входу: логін і пароль або реєстрація нового користувача ── -->
   <div class="gate" id="accessGate" hidden>
-    <form class="gate__card" id="accessGateForm" autocomplete="off">
+    <form class="gate__card" id="accessGateForm" autocomplete="on">
       <div class="gate__icon" aria-hidden="true">🔒</div>
       <h1 class="gate__title">Вхід у бюджет</h1>
-      <p class="gate__hint">Введіть свій код доступу — під ним ви будете записувати витрати.</p>
+      <p class="gate__hint">Введіть свій логін і пароль — під ними ви будете записувати витрати.</p>
 
       <label class="field">
-        <span class="field__label">Код доступу</span>
-        <input class="field__input" type="password" id="accessTokenInput"
-               placeholder="••••••••" autocomplete="current-password" required>
+        <span class="field__label">Логін</span>
+        <input class="field__input" type="text" id="loginInput"
+               placeholder="Наприклад, Оля" maxlength="40"
+               autocomplete="username" required>
       </label>
 
+      <label class="field">
+        <span class="field__label">Пароль</span>
+        <input class="field__input" type="password" id="passwordInput"
+               placeholder="••••••••••" autocomplete="current-password" required>
+      </label>
+
+      <p class="field__hint">Пароль не залишає браузер — сервер отримує лише хеш.</p>
       <p class="gate__error" id="accessGateError" role="alert" hidden></p>
       <button class="button button--primary button--block" type="submit" id="accessGateSubmit">
         Увійти
@@ -34,22 +42,23 @@
       <p class="gate__countdown" id="accessGateCountdown" hidden></p>
 
       <button class="gate__switch" type="button" id="showRegistrationButton">
-        Немає коду? Створити акаунт
+        Немає акаунта? Створити
       </button>
     </form>
 
-    <form class="gate__card" id="registrationForm" autocomplete="off" hidden>
+    <form class="gate__card" id="registrationForm" autocomplete="on" hidden>
       <div class="gate__icon" aria-hidden="true">👋</div>
       <h1 class="gate__title">Новий користувач</h1>
       <p class="gate__hint">
-        Оберіть ім'я та пароль. Акаунт створиться неактивним — увійти
+        Оберіть логін і пароль. Акаунт створиться неактивним — увійти
         зможете, коли власник таблиці увімкне його.
       </p>
 
       <label class="field">
-        <span class="field__label">Ім'я</span>
-        <input class="field__input" type="text" id="registrationNameInput"
-               placeholder="Наприклад, Оля" maxlength="40" autocomplete="off" required>
+        <span class="field__label">Логін</span>
+        <input class="field__input" type="text" id="registrationLoginInput"
+               placeholder="Наприклад, Оля" maxlength="40"
+               autocomplete="username" required>
       </label>
 
       <label class="field">
@@ -73,7 +82,7 @@
       </button>
 
       <button class="gate__switch" type="button" id="showLoginButton">
-        Вже є код? Увійти
+        Вже є акаунт? Увійти
       </button>
     </form>
   </div>
@@ -309,6 +318,24 @@
         Локально: створіть <code>tools/local-endpoint.txt</code> з адресою Web App
         і перезапустіть <code>start.cmd</code>.
         На GitHub: додайте секрет <code>APPS_SCRIPT_ENDPOINT</code> у налаштуваннях репозиторію.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── Сторінка відкрита не через HTTPS ────────────────────────────────── -->
+  <div class="gate" id="insecureContextGate" hidden>
+    <div class="gate__card">
+      <div class="gate__icon" aria-hidden="true">🔐</div>
+      <h1 class="gate__title">Потрібне HTTPS-з'єднання</h1>
+      <p class="gate__hint">
+        Пароль хешується прямо в браузері, а браузери дозволяють це
+        лише на захищеному з'єднанні.
+      </p>
+      <p class="gate__footnote">
+        Локально все працює: <code>http://localhost</code> вважається
+        захищеним. Якщо ви відкрили сайт у приватному вікні браузера
+        з адреси типу <code>http://192.168.…</code> — перейдіть на
+        <code>https://</code>-адресу сайту.
       </p>
     </div>
   </div>

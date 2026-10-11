@@ -26,12 +26,12 @@ import {
   savePendingEntries,
 } from "./localStore.js";
 
-/** Гість — стан до того, як користувач ввів код доступу. */
+/** Гість — стан до того, як користувач увійшов. */
 const ANONYMOUS_VIEWER = { name: "", color: "#8b95a8" };
 
 /**
  * Помилки, з яких є сенс повторювати запит. Решта — відмова сервера
- * «назавжди»: категорія не існує, код доступу неправильний. Такі
+ * «назавжди»: категорія не існує, сесія прострочена. Такі
  * записи треба викидати, інакше вони вічно блокуватимуть решту черги.
  */
 const RETRYABLE_ERROR_CODES = [
@@ -77,13 +77,13 @@ function createInitialState() {
 class BudgetStore {
   #state = createInitialState();
   #listeners = new Set();
-  #accessToken = null;
+  #sessionToken = null;
   /** @type {Promise<void> | null} відправка, яка вже триває */
   #flushPromise = null;
 
-  /** @param {string} accessToken */
-  setAccessToken(accessToken) {
-    this.#accessToken = accessToken;
+  /** @param {string} sessionToken */
+  setSessionToken(sessionToken) {
+    this.#sessionToken = sessionToken;
   }
 
   /** @returns {Readonly<object>} */
@@ -192,8 +192,8 @@ class BudgetStore {
       try {
         const response =
           nextQueuedEntry.action === "delete"
-            ? await deleteTransaction(this.#accessToken, nextQueuedEntry.transactionId)
-            : await submitTransaction(this.#accessToken, nextQueuedEntry.transaction);
+            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId)
+            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction);
 
         this.#applySnapshot(response.snapshot);
         this.#removeFromQueue(nextQueuedEntry.id);
@@ -209,7 +209,7 @@ class BudgetStore {
 
   /** @returns {Promise<void>} */
   async #reloadSnapshot() {
-    this.#applySnapshot(await fetchBudgetSnapshot(this.#accessToken));
+    this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken));
   }
 
   /**
@@ -239,7 +239,7 @@ class BudgetStore {
   /**
    * Розкладає помилку на стан індикатора.
    * Код зберігається окремо від тексту — щоб main.js міг прийняти
-   * рішення про повторний запит коду доступу, не парсячи рядки.
+   * рішення про повторний запит пароля, не парсячи рядки.
    *
    * @param {unknown} error
    */
@@ -250,7 +250,7 @@ class BudgetStore {
     if (errorCode === API_ERROR_CODE.unauthorized) {
       this.#patch({
         syncState: SYNC_STATE.error,
-        syncMessage: "Невірний код доступу",
+        syncMessage: "Сесія завершилася — увійдіть знову",
         syncErrorCode: errorCode,
         lastSyncError: error,
       });
@@ -269,7 +269,7 @@ class BudgetStore {
   /**
    * Додає операцію: сперку показує її в UI, потім відправляє.
    * Поле `user` тут відсутнє навмисно — його проставляє сервер
-   * із коду доступу, тож підробити ім'я неможливо.
+   * із сесійного токена, тож підробити ім'я неможливо.
    *
    * @param {object} transaction
    * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
@@ -371,7 +371,7 @@ class BudgetStore {
     });
   }
 
-  /** Повністю скидає стан — використовується при виході («забути код доступу»). */
+  /** Повністю скидає стан — використовується при виході («забути пароль»). */
   reset() {
     savePendingEntries([]);
     clearCachedSnapshot();

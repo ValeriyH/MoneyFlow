@@ -3,8 +3,12 @@
  * Інші модулі не знають ні про URL, ні про формат відповіді, ні про помилки.
  *
  * Усі запити йдуть методом POST, навіть читання. Причина конкретна:
- * код доступу в query string потрапляє в логи Google, в історію
+ * токен у query string потрапляє в логи Google, в історію
  * браузера і в заголовок Referer. У тілі запиту він не видно нікому.
+ *
+ * Окремо про пароль: він не залишає браузер у жодному запиті.
+ * Замість нього йде доказ `SHA-256(SHA-256(пароль) + час)` — значення,
+ * прив'язане до миттєвого часу, яке сервер приймає лише один раз.
  */
 
 import { APPS_SCRIPT_ENDPOINT, REQUEST_TIMEOUT_MS } from "../config.js";
@@ -24,7 +28,7 @@ export class ApiError extends Error {
   /**
    * @param {string} message
    * @param {string} code
-   * @param {{ retryAfterSeconds?: number }} [details] — додаткові дані від сервера
+   * @param {{ retryAfterSeconds?: number, serverTime?: number }} [details]
    */
   constructor(message, code, details = {}) {
     super(message);
@@ -43,10 +47,10 @@ export class ApiError extends Error {
  * Виконує запит до Apps Script із таймаутом і приведенням помилок
  * до єдиного типу ApiError.
  *
- * @param {{ action: string, accessToken: string, [key: string]: unknown }} command
+ * @param {{ action: string, sessionToken?: string, [key: string]: unknown }} command
  * @returns {Promise<object>}
  */
-async function sendCommand({ action, accessToken, ...payload }) {
+async function sendCommand({ action, sessionToken, ...payload }) {
   const abortController = new AbortController();
   const timeoutHandle = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT_MS);
 
@@ -56,7 +60,7 @@ async function sendCommand({ action, accessToken, ...payload }) {
       // text/plain обязателен: з application/json Apps Script відповідає
       // CORS-редиректом, який браузер блокує.
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, accessToken, ...payload }),
+      body: JSON.stringify({ action, sessionToken: sessionToken ?? "", ...payload }),
       signal: abortController.signal,
     });
 
@@ -76,7 +80,10 @@ async function sendCommand({ action, accessToken, ...payload }) {
       throw new ApiError(
         parsedBody.error ?? "Невідома помилка сервера",
         parsedBody.code ?? API_ERROR_CODE.serverError,
-        { retryAfterSeconds: parsedBody.retryAfterSeconds },
+        {
+          retryAfterSeconds: parsedBody.retryAfterSeconds,
+          serverTime: parsedBody.serverTime,
+        },
       );
     }
 
@@ -97,7 +104,10 @@ function normalizeTransportError(error) {
   if (error instanceof ApiError) return error;
 
   if (error.name === "AbortError") {
-    return new ApiError("Сервер не відповів за 15 секунд. Спробуйте ще раз.", API_ERROR_CODE.timeout);
+    return new ApiError(
+      `Сервер не відповів за ${Math.round(REQUEST_TIMEOUT_MS / 1000)} секунд. Спробуйте ще раз.`,
+      API_ERROR_CODE.timeout,
+    );
   }
 
   if (!navigator.onLine) {
@@ -111,47 +121,52 @@ function normalizeTransportError(error) {
 }
 
 /**
- * Надсилає заявку на створення користувача.
+ * Обмін логіну й пароля на сесійний токен.
  *
- * Єдиний запит без коду доступу - інакше заводити акаунт не мав би
- * сенсу нікому. Обмеження на кількість заявок тримає сервер.
- *
- * @param {string} userName
- * @param {string} password
+ * @param {{ login: string, proof: string, timestamp: number }} credentials
+ * @returns {Promise<{ token: string, expiresAt: number, serverTime: number }>}
  */
-export function requestUserRegistration(userName, password) {
-  return sendCommand({
-    action: "requestRegistration",
-    accessToken: "",
-    name: userName,
-    password,
-  });
+export function openSession({ login, proof, timestamp }) {
+  return sendCommand({ action: "authenticate", login, proof, timestamp });
 }
 
 /**
- * Завантажує повний знімок бюджету разом з тим, хто увійшов.
- * @param {string} accessToken
+ * Надсилає заявку на створення користувача.
+ *
+ * Єдиний запит без сесії — інакше завести акаунт не мав би
+ * сенсу нікому. Обмеження на кількість заявок тримає сервер.
+ *
+ * @param {string} login
+ * @param {string} passwordHash — SHA-256 пароля, порахований у браузері
  */
-export function fetchBudgetSnapshot(accessToken) {
-  return sendCommand({ action: "loadSnapshot", accessToken });
+export function requestUserRegistration(login, passwordHash) {
+  return sendCommand({ action: "requestRegistration", login, passwordHash });
+}
+
+/**
+ * Завантажує повний знімок бюджету разом із тим, хто увійшов.
+ * @param {string} sessionToken
+ */
+export function fetchBudgetSnapshot(sessionToken) {
+  return sendCommand({ action: "loadSnapshot", sessionToken });
 }
 
 /**
  * Додає одну операцію до таблиці. Хто витратив — визначає сервер
- * із коду доступу, клієнт це поле не передає.
+ * із токена, клієнт це поле не передає.
  *
- * @param {string} accessToken
+ * @param {string} sessionToken
  * @param {object} transactionPayload
  */
-export function submitTransaction(accessToken, transactionPayload) {
-  return sendCommand({ action: "addTransaction", accessToken, transaction: transactionPayload });
+export function submitTransaction(sessionToken, transactionPayload) {
+  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload });
 }
 
 /**
  * Видаляє операцію за її стійким ідентифікатором.
- * @param {string} accessToken
+ * @param {string} sessionToken
  * @param {string} transactionId
  */
-export function deleteTransaction(accessToken, transactionId) {
-  return sendCommand({ action: "deleteTransaction", accessToken, transactionId });
+export function deleteTransaction(sessionToken, transactionId) {
+  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId });
 }

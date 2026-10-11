@@ -2,25 +2,25 @@
  * bootstrap-sheets.gs — ОДНОРАЗОВИЙ скрипт підготовки таблиці.
  *
  * Запускається вручну з редактора Apps Script ПЕРЕД тим, як вставити
- * основний Code.gs. Створює три аркуші з шапками, заповнює каталог
- * категорій і заводить користувачів із кодами доступу.
+ * основні Code.gs та auth.gs. Створює три аркуші з шапками, заповнює
+ * каталог категорій і заводить користувачів.
  *
- * Після створення таблиці видаліть цей файл і вставте Code.gs.
+ * Після створення таблиці видаліть цей файл і вставте основні.
  *
  * Використання: рядок функції bootstrapSheets → «Запустити».
  */
 
 /**
- * Користувачі та їхні коди доступу. Код не генорується — ви задаєте
- * його самі і запам'ятовуєте. У таблиці зберігається лише хеш,
- * тому розшифрувати код із таблиці неможливо.
+ * Початкові користувачі та їхні паролі. Пароль не генерується — ви
+ * задаєте його самі й запам'ятовуєте. У таблиці зберігається лише
+ * хеш, тому дістати пароль із таблиці неможливо.
  *
- * Вимоги до коду: щонайменше 10 символів, має бути мала й велика
- * літера та цифра. Перевіряє registerUser на сервері.
+ * Вимоги: щонайменше 10 символів, мала й велика літера та цифра.
+ * Перевіряє requireStrongPassword на сервері.
  */
 const DEMO_USERS = [
-  { name: 'Я',       color: '#2563eb', accessToken: 'Grivna-2026' },
-  { name: 'Дружина', color: '#db2777', accessToken: 'Kvitka-2026' },
+  { login: 'Я',       color: '#2563eb', password: 'Grivna-2026' },
+  { login: 'Дружина', color: '#db2777', password: 'Kvitka-2026' },
 ];
 
 /** Каталог категорій: назва, тип, іконка, колір, місячний ліміт у гривнях. */
@@ -51,8 +51,9 @@ function bootstrapSheets() {
     'Назва', 'Тип', 'Іконка', 'Колір', 'Ліміт, ₴',
   ]);
 
+  // Порядок колонок неважливий: сервер пише за підписами, а не позиціями.
   writeSheet(spreadsheet, 'Users', [
-    'Ім\'я', 'Колір', 'Сіль', 'Код доступу', 'Активний',
+    'Ім\'я', 'Колір', 'Пароль', 'Активний',
   ]);
 
   fillCategories();
@@ -62,12 +63,13 @@ function bootstrapSheets() {
 
   const summary =
     'MoneyFlow: таблицю підготовлено.\n' +
-    'Коди доступу: ' +
+    'Початкові паролі: ' +
     DEMO_USERS.map(function (user) {
-      return user.name + ' → ' + user.accessToken;
+      return user.login + ' → ' + user.password;
     }).join(', ') +
-    '\nНаступний крок — вставити Code.gs в цей самий проєкт Apps Script ' +
-    'і розгорнути як Web App (Execute as: Me, Who has access: Anyone).';
+    '\nНаступний крок — вставити Code.gs та auth.gs у цей самий проєкт ' +
+    'Apps Script і розгорнути як Web App (Execute as: Me, ' +
+    'Who has access: Anyone).';
 
   Logger.log(summary);
   spreadsheet.toast(summary, 'Готово', 10);
@@ -103,38 +105,37 @@ function fillCategories() {
   categoriesSheet.getRange(2, 1, DEMO_CATEGORIES.length, 5).setValues(DEMO_CATEGORIES);
 }
 
-/** Заповнює аркуш Users: ім'я, колір, персональна сіль і хеш коду. */
+/** Заповнює аркуш Users: логін, колір, хеш пароля, ознака активності. */
 function fillUsers() {
   const usersSheet = SpreadsheetApp.getActive().getSheetByName('Users');
 
   const userRows = DEMO_USERS.map(function (user) {
-    const salt = generateSalt();
-    return [user.name, user.color, salt, hashAccessToken(user.accessToken, salt), 'Так'];
+    return [user.login, user.color, hashPassword(user.password), 'Так'];
   });
 
-  usersSheet.getRange(2, 1, userRows.length, 5).setValues(userRows);
-}
-
-/** @returns {string} випадкова рядкова сіль */
-function generateSalt() {
-  return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  usersSheet.getRange(2, 1, userRows.length, 4).setValues(userRows);
 }
 
 /**
- * Хеш коду доступу. Функція дублює таку саму з Code.gs — після
- * вставки основного файлу bootstrap можна видалити разом із ним.
+ * SHA-256 пароля шістнадцятковим текстом.
  *
- * @param {string} accessToken
- * @param {string} salt
+ * Дублює hashText з auth.gs: підготовка таблиці відбувається до того,
+ * як основні файли в проєкті, тож доведеться мати копію. Після
+ * вставки основних файлів bootstrap можна видалити разом із ним.
+ *
+ * @param {string} password
  * @returns {string}
  */
-function hashAccessToken(accessToken, salt) {
-  const digest = Utilities.computeDigest(
+function hashPassword(password) {
+  return Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
-    salt + accessToken,
+    String(password),
     Utilities.Charset.UTF_8,
-  );
-  return Utilities.base64Encode(digest);
+  )
+    .map(function (byteValue) {
+      return ('0' + ((byteValue + 256) % 256).toString(16)).slice(-2);
+    })
+    .join('');
 }
 
 /**

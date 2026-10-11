@@ -29,7 +29,8 @@ export function isEnvironmentConfigured() {
 
 /** Ключі, під якими дані лежать у localStorage цього браузера. */
 export const STORAGE_KEYS = {
-  accessToken: "moneyflow.access-token",
+  sessionToken: "moneyflow.session-token",
+  clockOffset: "moneyflow.clock-offset",
   pendingEntries: "moneyflow.pending-entries",
   activePeriod: "moneyflow.active-period",
   activeView: "moneyflow.active-view",
@@ -74,6 +75,15 @@ export const SYNC_STATE_LABELS = {
  * старт Apps Script легко перевищує 15 секунд. Ставимо з запасом.
  */
 export const REQUEST_TIMEOUT_MS = 30000;
+
+/**
+ * Мінімальна довжина пароля.
+ *
+ * Дублює MIN_PASSWORD_LENGTH в apps-script/auth.gs: клієнт показує
+ * вимогу раніше, ніж людина встигне натиснути «Увійти». Значення
+ * має збігатися з серверним.
+ */
+export const MIN_PASSWORD_LENGTH = 10;
 
 /** Скільки операцій показувати у списку «Останні операції». */
 export const HISTORY_PAGE_SIZE = 25;

@@ -1,18 +1,24 @@
 /**
  * registrationPanel.js — форма самостійної реєстрації.
  *
- * Живе на екрані входу поруч із формою входу. Людина обирає ім'я
+ * Живе на екрані входу поруч із формою входу. Людина обирає логін
  * та пароль, і вони потрапляють у таблицю як неактивний рядок.
  * Увійти можна буде лише після того, як власник таблиці увімкне
  * цей рядок у колонці «Активний».
  */
 
+import { MIN_PASSWORD_LENGTH } from "../config.js";
 import { ApiError, API_ERROR_CODE, requestUserRegistration } from "../core/apiClient.js";
+import { hashPassword } from "../domain/crypto.js";
 import { findById, on, setVisibility } from "./dom.js";
 
-/** Ті самі вимоги, що й на сервері. Клієнт показує їх раніше. */
+/**
+ * Ті самі вимоги, що й на сервері: клієнт показує їх раніше,
+ * щоб не витрачати запит на очевидно слабкий пароль.
+ * Має збігатися з requireStrongPassword в apps-script/auth.gs.
+ */
 const PASSWORD_RULES = [
-  { key: "length", isMet: (value) => value.length >= 10 },
+  { key: "length", isMet: (value) => value.length >= MIN_PASSWORD_LENGTH },
   { key: "uppercase", isMet: (value) => /[A-Z]/.test(value) },
   { key: "digit", isMet: (value) => /\d/.test(value) },
 ];
@@ -20,7 +26,7 @@ const PASSWORD_RULES = [
 export function initRegistrationPanel() {
   const loginFormElement = findById("accessGateForm");
   const registrationFormElement = findById("registrationForm");
-  const nameInputElement = findById("registrationNameInput");
+  const loginInputElement = findById("registrationLoginInput");
   const passwordInputElement = findById("registrationPasswordInput");
   const errorElement = findById("registrationError");
   const submitButtonElement = findById("registrationSubmit");
@@ -47,13 +53,13 @@ export function initRegistrationPanel() {
     setVisibility(registrationFormElement, false);
     setVisibility(loginFormElement, true);
     setVisibility(errorElement, false);
-    findById("accessTokenInput").focus();
+    findById("loginInput").focus();
   }
 
   function showRegistrationForm() {
     setVisibility(loginFormElement, false);
     setVisibility(registrationFormElement, true);
-    nameInputElement.focus();
+    loginInputElement.focus();
   }
 
   on(findById("showRegistrationButton"), "click", showRegistrationForm);
@@ -63,11 +69,11 @@ export function initRegistrationPanel() {
     event.preventDefault();
     if (submitButtonElement.disabled) return;
 
-    const userName = nameInputElement.value.trim();
+    const newLogin = loginInputElement.value.trim();
     const password = passwordInputElement.value;
 
-    if (userName.length < 2) {
-      showError("Введіть ім'я — щонайменше 2 символи.");
+    if (newLogin.length < 2) {
+      showError("Введіть логін — щонайменше 2 символи.");
       return;
     }
 
@@ -82,12 +88,14 @@ export function initRegistrationPanel() {
     submitButtonElement.textContent = "Створюємо…";
 
     try {
-      await requestUserRegistration(userName, password);
+      // На сервер іде хеш, а не сам пароль: так правило
+      // «пароль не залишає браузера» діє і для реєстрації.
+      await requestUserRegistration(newLogin, await hashPassword(password));
 
       registrationFormElement.reset();
       renderPasswordRequirements();
       showSuccess(
-        `Акаунт «${userName}» створено. Він зможе увійти, ` +
+        `Акаунт «${newLogin}» створено. Він зможе увійти, ` +
         `коли власник таблиці увімкне його.`,
       );
     } catch (error) {
@@ -104,7 +112,7 @@ export function initRegistrationPanel() {
    */
   function describeUnmetRule(ruleKey) {
     const messagesByRule = {
-      length: "Пароль має містити щонайменше 10 символів.",
+      length: `Пароль має містити щонайменше ${MIN_PASSWORD_LENGTH} символів.`,
       uppercase: "Пароль має містити хоча б одну велику літеру.",
       digit: "Пароль має містити хоча б одну цифру.",
     };
@@ -130,11 +138,10 @@ export function initRegistrationPanel() {
    * @returns {string}
    */
   function describeRegistrationError(error) {
-    if (error instanceof ApiError && error.code === API_ERROR_CODE.rateLimited) {
-      return error.message;
-    }
-
-    if (error instanceof ApiError && error.code === API_ERROR_CODE.badRequest) {
+    if (
+      error instanceof ApiError
+      && (error.code === API_ERROR_CODE.rateLimited || error.code === API_ERROR_CODE.badRequest)
+    ) {
       return error.message;
     }
 
