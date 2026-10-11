@@ -1,21 +1,36 @@
 /**
- * localStore.js — безпечна обгортка над localStorage.
+ * localStore.js — безпечна обгортка над сховищем браузера.
  *
- * Причина існування: localStorage кидає винятки у приватному режимі Safari
+ * Причина існування: сховище кидає винятки у приватному режимі Safari
  * і переповнюється. Тому кожна операція проходить через `try/catch`,
  * а приватний режим не ламає весь застосунок.
+ *
+ * ── Два сховища, два призначення ──────────────────────────────────────────
+ *
+ * `localStorage` живе назавжди. Сюди йде те, що має пережити вкладку:
+ * сесія та черга несинхронізованих записів.
+ *
+ * `sessionStorage` живе до закриття вкладки. Сюди йде кеш знімка —
+ * уся історія операцій. Коли вкладку закрито, копія на диску зникає:
+ * витягнути її з профілю браузера вже неможливо.
+ *
+ * Різниця не в зручності (кеш переживає перезавантаження в обох
+ * випадках), а в тому, що лишається на диску, поки ви не закрили
+ * вкладку. Це різниця між «дані лежать у браузері постійно» і
+ * «дані лежать, поки ними користуються».
  */
 
 import { PENDING_ENTRIES_KEY_PREFIX, STORAGE_KEYS } from "../config.js";
 
 /**
+ * @param {Storage} storage
  * @param {string} storageKey
  * @param {unknown} fallbackValue
  * @returns {unknown}
  */
-function readJsonValue(storageKey, fallbackValue) {
+function readFrom(storage, storageKey, fallbackValue) {
   try {
-    const rawValue = window.localStorage.getItem(storageKey);
+    const rawValue = storage.getItem(storageKey);
     return rawValue === null ? fallbackValue : JSON.parse(rawValue);
   } catch {
     return fallbackValue;
@@ -23,13 +38,14 @@ function readJsonValue(storageKey, fallbackValue) {
 }
 
 /**
+ * @param {Storage} storage
  * @param {string} storageKey
  * @param {unknown} value
  * @returns {boolean} — чи вдалося записати
  */
-function writeJsonValue(storageKey, value) {
+function writeTo(storage, storageKey, value) {
   try {
-    window.localStorage.setItem(storageKey, JSON.stringify(value));
+    storage.setItem(storageKey, JSON.stringify(value));
     return true;
   } catch {
     return false;
@@ -37,15 +53,68 @@ function writeJsonValue(storageKey, value) {
 }
 
 /**
+ * @param {Storage} storage
+ * @param {string} storageKey
+ * @returns {void}
+ */
+function removeFrom(storage, storageKey) {
+  try {
+    storage.removeItem(storageKey);
+  } catch {
+    /* приватний режим — немає чого видаляти */
+  }
+}
+
+/**
+ * @param {string} storageKey
+ * @param {unknown} fallbackValue
+ * @returns {unknown}
+ */
+function readJsonValue(storageKey, fallbackValue) {
+  return readFrom(window.localStorage, storageKey, fallbackValue);
+}
+
+/**
+ * @param {string} storageKey
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function writeJsonValue(storageKey, value) {
+  return writeTo(window.localStorage, storageKey, value);
+}
+
+/**
  * @param {string} storageKey
  * @returns {void}
  */
 function removeValue(storageKey) {
-  try {
-    window.localStorage.removeItem(storageKey);
-  } catch {
-    /* приватний режим — немає чого видаляти */
-  }
+  removeFrom(window.localStorage, storageKey);
+}
+
+/**
+ * @param {string} storageKey
+ * @param {unknown} fallbackValue
+ * @returns {unknown}
+ */
+function readSessionJsonValue(storageKey, fallbackValue) {
+  return readFrom(window.sessionStorage, storageKey, fallbackValue);
+}
+
+/**
+ * @param {string} storageKey
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function writeSessionJsonValue(storageKey, value) {
+  return writeTo(window.sessionStorage, storageKey, value);
+}
+
+/**
+ * @param {string} storageKey
+ * @returns {void}
+ */
+function removeSessionValue(storageKey) {
+  removeFrom(window.sessionStorage, storageKey);
 }
 
 /* ── Сесія ───────────────────────────────────────────────────────────────── */
@@ -192,18 +261,23 @@ export function loadActivePeriod() {
 /**
  * Останній успішно завантажений знімок потрібен, щоб показати дані
  * одразу при відкритті, не чекаючи на мережу.
+ *
+ * Живе у sessionStorage, а не в localStorage: тут вся історія
+ * операцій відкритим текстом, і вона не має лежати на диску весь час.
+ * Закрили вкладку — копії немає.
+ *
  * @returns {{ viewer: object, categories: Array<object>, transactions: Array<object>, lastSyncedAt: string } | null}
  */
 export function loadCachedSnapshot() {
-  const cachedSnapshot = readJsonValue(STORAGE_KEYS.cachedSnapshot, null);
+  const cachedSnapshot = readSessionJsonValue(STORAGE_KEYS.cachedSnapshot, null);
   return cachedSnapshot && Array.isArray(cachedSnapshot.transactions) ? cachedSnapshot : null;
 }
 
 /** @param {object} snapshot */
 export function saveCachedSnapshot(snapshot) {
-  writeJsonValue(STORAGE_KEYS.cachedSnapshot, snapshot);
+  writeSessionJsonValue(STORAGE_KEYS.cachedSnapshot, snapshot);
 }
 
 export function clearCachedSnapshot() {
-  removeValue(STORAGE_KEYS.cachedSnapshot);
+  removeSessionValue(STORAGE_KEYS.cachedSnapshot);
 }
