@@ -26,9 +26,9 @@ export const API_ERROR_CODE = {
 /** Помилка, зрозуміла до верхнього шару: має стабільний код і людське повідомлення. */
 export class ApiError extends Error {
   /**
-   * @param {string} message
+   * @param {string} message — що показати людині (з сервера: displayError)
    * @param {string} code
-   * @param {{ retryAfterSeconds?: number, serverTime?: number }} [details]
+   * @param {{ retryAfterSeconds?: number, serverTime?: number, technicalMessage?: string }} [details]
    */
   constructor(message, code, details = {}) {
     super(message);
@@ -77,14 +77,23 @@ async function sendCommand({ action, sessionToken, ...payload }) {
     }
 
     if (parsedBody.ok === false) {
-      throw new ApiError(
-        parsedBody.error ?? "Невідома помилка сервера",
-        parsedBody.code ?? API_ERROR_CODE.serverError,
-        {
-          retryAfterSeconds: parsedBody.retryAfterSeconds,
-          serverTime: parsedBody.serverTime,
-        },
-      );
+      // Сервер надсилає два тексти: error - для журналу,
+      // displayError - для сторінки. На екрані показуємо другий,
+      // перший лишається в консолі, щоб не загубити деталі.
+      const technicalMessage = parsedBody.error ?? "Невідома помилка сервера";
+      const displayMessage = parsedBody.displayError ?? technicalMessage;
+
+      if (technicalMessage !== displayMessage) {
+        console.error(
+          `[MoneyFlow] ${parsedBody.code}: ${technicalMessage}`,
+        );
+      }
+
+      throw new ApiError(displayMessage, parsedBody.code ?? API_ERROR_CODE.serverError, {
+        retryAfterSeconds: parsedBody.retryAfterSeconds,
+        serverTime: parsedBody.serverTime,
+        technicalMessage,
+      });
     }
 
     return parsedBody;

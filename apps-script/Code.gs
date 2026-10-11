@@ -330,14 +330,17 @@ function setUserActive(userName, isActive) {
  * збій тут виглядав би як «невірний пароль», і людина шукала б
  * проблему в своєму голові.
  *
- * Те саме стосується некоректного хеша: якщо в клітинці не 64
- * символи шістнадцяткової, цей пароль не підійде ніколи — і без
- * перевірки користувач не зрозуміє, чому не входить.
+ * ЩО СТОСУЄТЬСЯ ХЕША — свідомо не перевіряється тут. Раніше кидали
+ * помилку з ім’ям користувача, у якого хеш некоректний, і це
+ * витікало назовні: спроба увійти під чужим логіном відповідала
+ * «у користувача Тест некоректний хеш» і тим самим видавала, що
+ * такий користувач є. Тепер битий хеш не зупиняє вхід ні для кого,
+ * а дізнатися про нього можна через checkUsersIntegrity().
  *
  * @returns {Array<BudgetUser>}
  */
 function readUsers() {
-  const users = readSheetAsRecords(SHEET_USERS, REQUIRED_USER_COLUMNS)
+  return readSheetAsRecords(SHEET_USERS, REQUIRED_USER_COLUMNS)
     .map(function (record) {
       return {
         name: String(record[HEADER_USER_NAME] || '').trim(),
@@ -349,19 +352,32 @@ function readUsers() {
     .filter(function (user) {
       return user.name !== '' && user.passwordHash !== '';
     });
+}
 
-  for (const user of users) {
-    if (isSha256Hex(user.passwordHash)) continue;
+/**
+ * Перевіряє цілісність аркуша Users і перелічує все, що зламано.
+ *
+ *   checkUsersIntegrity();
+ *
+ * Окрема функція, а не перевірка в readUsers, з міркувань безпеки:
+ * деталі про конкретних людей не можна віддавати тому, хто просто
+ * намагається вгадати логін.
+ *
+ * @return {string} звіт, видно у виводі редактора
+ */
+function checkUsersIntegrity() {
+  const users = readUsers();
+  const brokenLogins = users
+    .filter(function (user) { return !isSha256Hex(user.passwordHash); })
+    .map(function (user) { return user.name + ' (' + user.passwordHash.length + ' символів)'; });
 
-    throw new RequestError(
-      'У користувача «' + user.name + '» у стовпці «' + HEADER_USER_PASSWORD_HASH +
-      '» некоректний хеш (' + user.passwordHash.length + ' символів замість 64). ' +
-      'Задайте пароль знову: resetUserPassword(\'' + user.name + '\', \'НовийПароль\');',
-      'SERVER_ERROR',
-    );
+  if (brokenLogins.length === 0) {
+    const inactiveCount = users.filter(function (user) { return !user.isActive; }).length;
+    return 'Users: все справне. Користувачів: ' + users.length + ', з них неактивних: ' + inactiveCount + '.';
   }
 
-  return users;
+  return 'Users: некоректний хеш у ' + brokenLogins.length + ' — ' + brokenLogins.join(', ') +
+    '. Виправте так: resetUserPassword(логін, НовийПароль);';
 }
 
 /**
@@ -943,18 +959,34 @@ function toApiKind(rawValue) {
 
 /* ── Відповіді та помилки ───────────────────────────────────────────────── */
 
-/** Помилка, яку можна показати користувачу без деталей. */
+/**
+ * Помилка запиту.
+ *
+ * Має два тексти:
+ *   message       - що пішло не так. Йде в `error` відповіді й у журнал.
+ *   displayMessage - що показати людині. Йде в `displayError`.
+ *
+ * Розділено для одного випадку: сервер може знати, що в таблиці
+ * зламаний хеш користувача, але сказати про це тому, хто просто
+ * намагається вгадати логін, не можна - інакше відповідь видає
+ * перелік тих, хто тут зареєстрований. Деталі лишаються в error,
+ * на екрані з'являється нейтральний текст.
+ *
+ * Якщо displayMessage не задано, показується те саме, що в error.
+ */
 class RequestError extends Error {
   /**
    * @param {string} message
    * @param {string} code
-   * @param {{ retryAfterSeconds?: number }} [details] — додаткові поля для клієнта
+   * @param {{ [key: string]: unknown }} [details] — додаткові поля відповіді
+   * @param {string} [displayMessage]
    */
-  constructor(message, code, details) {
+  constructor(message, code, details, displayMessage) {
     super(message);
     this.name = 'RequestError';
     this.code = code;
     this.details = details || {};
+    this.displayMessage = displayMessage || message;
   }
 }
 
@@ -972,6 +1004,10 @@ function respondWithJson(payload) {
  * Apps Script не дозволяє керувати HTTP-кодом, тому код
  * помилки їде в тілі відповіді.
  *
+ * Формат помилки:
+ *   error        - для журналу й розробника
+ *   displayError - те, що показує сторінка
+ *
  * @param {Error} error
  * @returns {TextOutput}
  */
@@ -987,6 +1023,9 @@ function respondWithError(error) {
       ok: false,
       code: isExpectedError ? error.code : 'SERVER_ERROR',
       error: isExpectedError ? error.message : 'Внутрішня помилка сервера. Спробуйте пізніше.',
+      displayError: isExpectedError
+        ? error.displayMessage
+        : 'Сервер не зміг виконати запит. Спробуйте пізніше.',
     },
     isExpectedError ? error.details : {},
   ));

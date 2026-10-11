@@ -36,6 +36,15 @@ const PROOF_TIMESTAMP_WINDOW_MINUTES = 60;
 /** Мінімальна довжина пароля. Однакова на сервері й у формі. */
 const MIN_PASSWORD_LENGTH = 10;
 
+/**
+ * Однакова відповідь на відмову у вході.
+ *
+ * Не розкриває, існує такий логін чи ні: інакше можна було б
+ * перебирати логіни й за текстом помилки дізнаватися, хто
+ * зареєстрований.
+ */
+const REFUSAL_MESSAGE = 'Невірний логін або пароль';
+
 const PROPERTY_TOKEN_SECRET = 'moneyflow.tokenSecret';
 const PROPERTY_TOKEN_TTL = 'moneyflow.tokenTtlHours';
 const PROPERTY_LOGIN_STATE = 'moneyflow.loginState';
@@ -256,9 +265,14 @@ function authenticateByCredentials(payload) {
   }
 
   const user = findUserByLogin(login);
+
+  // Немає користувача, є неактивний, зламаний хеш — назові
+  // однакова відповідь. Різні тексти видали б перелік тих,
+  // хто тут зареєстрований: можна було б перебирати логіни й
+  // дивитися, які відповідають інакше.
   if (!user) {
     registerFailedAttempt();
-    throw new RequestError('Невірний логін або пароль', 'UNAUTHORIZED');
+    throw new RequestError(REFUSAL_MESSAGE, 'UNAUTHORIZED');
   }
 
   // Код правильний, але акаунт ще не увімкнутий. Кажемо прямо,
@@ -284,10 +298,20 @@ function authenticateByCredentials(payload) {
     );
   }
 
+  if (!isSha256Hex(user.passwordHash)) {
+    console.error(
+      'У користувача «' + user.name + '» некоректний хеш (' +
+      user.passwordHash.length + ' символів замість 64). ' +
+      'Виправте: checkUsersIntegrity(); resetUserPassword(логін, НовийПароль);',
+    );
+    registerFailedAttempt();
+    throw new RequestError(REFUSAL_MESSAGE, 'UNAUTHORIZED');
+  }
+
   const expectedProof = hashText(user.passwordHash + String(clientTimestamp));
   if (expectedProof !== proof) {
     registerFailedAttempt();
-    throw new RequestError('Невірний логін або пароль', 'UNAUTHORIZED');
+    throw new RequestError(REFUSAL_MESSAGE, 'UNAUTHORIZED');
   }
 
   clearFailedAttempts();
