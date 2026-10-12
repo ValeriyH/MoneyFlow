@@ -872,10 +872,11 @@ function appendTransaction(payload, viewer) {
     return createdTransaction;
   }
 
+  // Порядок значень повторює шапку Transactions, де більше немає
+  // колонки «Тип»: доходи не вводяться.
   appendRowByColumnNames(transactionsSheet, [
     transactionId,
     occurredOn,
-    transactionKind,
     categoryName,
     amount,
     viewer.name,
@@ -1275,7 +1276,7 @@ function respondWithError(error) {
     {
       ok: false,
       code: isExpectedError ? error.code : 'SERVER_ERROR',
-      error: isExpectedError ? error.message : 'Внутрішня помилка сервера. Спробуйте пізніше.',
+      error: error instanceof Error ? error.message : String(error),
       displayError: isExpectedError
         ? error.displayMessage
         : 'Сервер не зміг виконати запит. Спробуйте пізніше.',
