@@ -3,9 +3,9 @@
  * із можливістю видалити запис однією кнопкою.
  */
 
-import { HISTORY_PAGE_SIZE, KIND_LABELS, TRANSACTION_KIND } from "../config.js";
+import { HISTORY_PAGE_SIZE } from "../config.js";
 import { formatCurrency, formatFullDate } from "../domain/formatters.js";
-import { filterTransactionsByPeriod, normalizeTransactionKind, takeRecentTransactions } from "../domain/statistics.js";
+import { filterTransactionsByPeriod, takeRecentTransactions } from "../domain/statistics.js";
 import { clearChildren, createElement, findById, on, setVisibility } from "./dom.js";
 
 /**
@@ -61,14 +61,15 @@ export function initTransactionList({ onDeleteRequest }) {
    */
   function createTransactionItem(transaction) {
     const categoryMeta = categoryMetaByName.get(transaction.category);
-    const isIncome = normalizeTransactionKind(transaction.kind) === TRANSACTION_KIND.income;
 
     const itemElement = createElement("li", { className: "transaction" });
     itemElement.dataset.pending = String(transaction.pending === true);
 
     const iconElement = createElement("span", {
       className: "transaction__icon",
-      textContent: categoryMeta?.icon ?? (isIncome ? "💰" : "💸"),
+      // Категорію могли прибрати з таблиці — тоді в історії лишається
+      // нейтральна крапка, щоб старий запис не зник без причини.
+      textContent: categoryMeta?.icon ?? "•",
       attributes: { "aria-hidden": "true" },
     });
 
@@ -86,9 +87,8 @@ export function initTransactionList({ onDeleteRequest }) {
 
     const amountElement = createElement("span", {
       className: "transaction__amount",
-      textContent: `${isIncome ? "+" : "−"}${formatCurrency(transaction.amount)}`,
+      textContent: `−${formatCurrency(transaction.amount)}`,
     });
-    amountElement.dataset.kind = transaction.kind;
 
     const deleteButtonElement = createElement("button", {
       className: "transaction__delete",
@@ -106,10 +106,8 @@ export function initTransactionList({ onDeleteRequest }) {
    * @returns {string}
    */
   function buildMetaLine(transaction) {
-    const kindLabel = KIND_LABELS[transaction.kind] ?? "операція";
     const noteSuffix = transaction.note ? ` · ${transaction.note}` : "";
-
-    return `${formatFullDate(transaction.occurredOn)} · ${transaction.user || "—"} · ${kindLabel}${noteSuffix}`;
+    return `${formatFullDate(transaction.occurredOn)} · ${transaction.user || "—"}${noteSuffix}`;
   }
 
   return { render };

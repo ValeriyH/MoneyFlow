@@ -74,6 +74,11 @@ budgetStore.subscribe(renderApplicationState);
 
 /* ── Життєвий цикл ──────────────────────────────────────────────────────── */
 
+// Відкритий місяць треба передати сховищу ДО першої синхронізації:
+// запит будується за ним, і без нього перший вхід підхопив би лише
+// поточний місяць, а на екрані лишився б «Завантаження місяця…».
+budgetStore.setActivePeriod(sessionState.activePeriodKey);
+
 initPeriodSwitcher();
 initLifecycleListeners();
 
@@ -181,10 +186,6 @@ function revealApplication() {
   setVisibility(appElement, true);
   sessionState.isAppVisible = true;
   accessGate.render(true);
-
-  // Відкритий місяць не можна викинути з пам'яті — інакше панелі
-  // залишаться на «Завантаження місяця…» назавжди.
-  budgetStore.setActivePeriod(sessionState.activePeriodKey);
 
   // Стан уже містить дані (sync відпрацював до показу застосунку),
   // але підписка їх пропустила, бо застосунок був невидимий.

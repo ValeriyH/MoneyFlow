@@ -26,16 +26,20 @@ export function initBudgetPanel() {
       referenceDate,
     );
 
-    setVisibility(budgetEmptyMessageElement, budgetReport.length === 0);
     clearChildren(budgetListElement);
+    setVisibility(budgetEmptyMessageElement, budgetReport.length === 0);
+
+    // Бейдж скидаємо ЗАВЖДИ, до раннього виходу. Інакше на місяці без
+    // бюджету він показував би «Загалом …» із попереднього місяця —
+    // цифра, якої на екрані не відповідає ніщо.
+    budgetBadgeElement.textContent =
+      budgetReport.length === 0 ? "—" : buildBadgeText(budgetReport);
 
     if (budgetReport.length === 0) return;
 
     for (const budgetItem of budgetReport) {
       budgetListElement.append(createBudgetItem(budgetItem));
     }
-
-    budgetBadgeElement.textContent = buildBadgeText(budgetReport);
   }
 
   /**

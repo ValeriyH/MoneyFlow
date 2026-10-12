@@ -180,8 +180,8 @@
 }
 
 .gate__error[data-tone="success"] {
-  color: var(--color-income);
-  background: var(--color-income-soft);
+  color: var(--color-positive);
+  background: var(--color-positive-soft);
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   line-height: 1.5;

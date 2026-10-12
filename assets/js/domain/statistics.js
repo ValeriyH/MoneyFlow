@@ -4,7 +4,6 @@
  * на виході готовий опис для відтворення в UI.
  */
 
-import { TRANSACTION_KIND } from "../config.js";
 import {
   daysInPeriod,
   elapsedDaysInPeriod,
@@ -27,45 +26,39 @@ export function filterTransactionsByPeriod(transactions, periodKey) {
 }
 
 /**
- * Тип операції у форматі API — «expense» або «income».
- *
- * Сервер уже надсилає саме так, але таблиця може прийти зі старих
- * кешів або з ручного рядка, де тип записано українською.
- * Клієнт не має на цьому ламатися й нульових цифр.
- *
- * @param {unknown} rawKind
- * @returns {'expense' | 'income'}
- */
-export function normalizeTransactionKind(rawKind) {
-  const normalizedValue = String(rawKind ?? "").trim().toLowerCase();
-
-  const incomeAliases = ["дохід", "доход", "income", "in", "зарплата", "+"];
-  return incomeAliases.includes(normalizedValue) ? "income" : "expense";
-}
-
-/**
- * Сума всіх операцій певного типу.
+ * Сума операцій.
  * @param {Array<object>} transactions
- * @param {string} kind
  * @returns {number}
  */
-function totalByKind(transactions, kind) {
-  return transactions
-    .filter((transaction) => normalizeTransactionKind(transaction.kind) === kind)
-    .reduce((runningTotal, transaction) => runningTotal + transaction.amount, 0);
+function totalAmount(transactions) {
+  return transactions.reduce((runningTotal, transaction) => runningTotal + transaction.amount, 0);
 }
 
 /**
- * Повний звіт за місяць: баланс, структура витрат, прогноз, динаміка.
+ * Загальний бюджет на місяць: сума лімітів усіх категорій.
+ *
+ * Ліміти приходять із сервера вже відфільтрованими за місяцем,
+ * тому сума береться проста. Категорії без ліміта в бюджет не
+ * входять, але лишаються доступними для введення витрат.
+ *
+ * @param {Array<object>} categories
+ * @returns {number}
+ */
+export function totalBudgetForPeriod(categories) {
+  return categories.reduce((runningTotal, category) => runningTotal + (category.limit ?? 0), 0);
+}
+
+/**
+ * Повний звіт за місяць: залишок, структура витрат, прогноз, динаміка.
  *
  * @param {Array<object>} allTransactions — усі операції бюджету
- * @param {Array<object>} categories — каталог для іконок і кольорів
+ * @param {Array<object>} categories — каталог для іконок, кольорів і лімітів
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {{
  *   periodKey: string,
  *   expenseTotal: number,
- *   incomeTotal: number,
+ *   budgetTotal: number,
  *   balance: number,
  *   transactionCount: number,
  *   dailyAverageExpense: number,
@@ -77,20 +70,19 @@ function totalByKind(transactions, kind) {
 export function buildPeriodSummary(allTransactions, categories, periodKey, referenceDate = new Date()) {
   const periodTransactions = filterTransactionsByPeriod(allTransactions, periodKey);
 
-  const expenseTotal = totalByKind(periodTransactions, TRANSACTION_KIND.expense);
-  const incomeTotal = totalByKind(periodTransactions, TRANSACTION_KIND.income);
+  const expenseTotal = totalAmount(periodTransactions);
+  const budgetTotal = totalBudgetForPeriod(categories);
 
   const elapsedDays = Math.max(elapsedDaysInPeriod(periodKey, referenceDate), 1);
-  const previousPeriodTotal = totalByKind(
+  const previousPeriodTotal = totalAmount(
     filterTransactionsByPeriod(allTransactions, shiftPeriodKey(periodKey, -1)),
-    TRANSACTION_KIND.expense,
   );
 
   return {
     periodKey,
     expenseTotal,
-    incomeTotal,
-    balance: incomeTotal - expenseTotal,
+    budgetTotal,
+    balance: budgetTotal - expenseTotal,
     transactionCount: periodTransactions.length,
     dailyAverageExpense: expenseTotal / elapsedDays,
     projectedExpenseTotal: isCurrentPeriod(periodKey, referenceDate)
@@ -98,16 +90,16 @@ export function buildPeriodSummary(allTransactions, categories, periodKey, refer
       : expenseTotal,
     previousPeriodExpenseTotal: previousPeriodTotal,
     remainingDays: remainingDaysInPeriod(periodKey, referenceDate),
-    categoryBreakdown: buildCategoryBreakdown(
-      periodTransactions.filter((transaction) => normalizeTransactionKind(transaction.kind) === TRANSACTION_KIND.expense),
-      categories,
-      expenseTotal,
-    ),
+    categoryBreakdown: buildCategoryBreakdown(periodTransactions, categories, expenseTotal),
   };
 }
 
 /**
  * Розподіл витрат по категоріях, відсортований від більшого до меншого.
+ *
+ * Категорія, якої вже немає в каталозі, не зникає з історії:
+ * вона показується нейтральною крапкою. Тому старі записи лишаються
+ * читабельними, навіть якщо категорію прибрали з таблиці.
  *
  * @param {Array<object>} expenseTransactions
  * @param {Array<object>} categories

@@ -10,7 +10,7 @@
  * інтерфейс не чекає 3 секунди, а черга гарантує доставку.
  */
 
-import { FALLBACK_CATEGORIES, SYNC_STATE } from "../config.js";
+import { SYNC_STATE } from "../config.js";
 import {
   ApiError,
   API_ERROR_CODE,
@@ -148,7 +148,7 @@ function createInitialState() {
     /** @type {{ name: string, color: string }} хто увійшов */
     viewer: ANONYMOUS_VIEWER,
     /** @type {Array<object>} */
-    categories: FALLBACK_CATEGORIES,
+    categories: [],
     /** @type {Array<object>} */
     transactions: [],
     /**
@@ -189,6 +189,15 @@ class BudgetStore {
   #loadingPeriods = new Set();
   /** @type {string | null} місяць, який користувач дивиться зараз */
   #activePeriodKey = null;
+  /**
+   * @type {Map<string, Array<object>>} ліміти, вже бачені за цю сесію
+   *
+   * Ліміти належать місяцю, тому «повернутися на жовтень» означає
+   * побачити жовтневий бюджет, а не той, що був на екрані мить тому.
+   * Тримаємо їх окремо від місяців, щоб повторне перемикання не
+   * вимагало запиту.
+   */
+  #categoriesByLimitPeriod = new Map();
   /**
    * Токен завжди йде з логіном: вони визначають, чию чергу
    * ми читаємо і чиї записи відправляємо.
@@ -234,7 +243,7 @@ class BudgetStore {
 
     this.#patch({
       viewer: cachedSnapshot.viewer ?? ANONYMOUS_VIEWER,
-      categories: cachedSnapshot.categories?.length ? cachedSnapshot.categories : FALLBACK_CATEGORIES,
+      categories: cachedSnapshot.categories ?? [],
       transactions: cachedSnapshot.transactions ?? [],
       loadedPeriods: Array.isArray(cachedSnapshot.loadedPeriods)
         ? cachedSnapshot.loadedPeriods
@@ -312,12 +321,13 @@ class BudgetStore {
 
       try {
         const periods = this.#requestedPeriods();
+        const limitPeriod = this.#limitPeriod();
         const response =
           nextQueuedEntry.action === "delete"
-            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId, periods)
-            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction, periods);
+            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId, periods, limitPeriod)
+            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction, periods, limitPeriod);
 
-        this.#applySnapshot(response.snapshot);
+        this.#applySnapshot(response.snapshot, limitPeriod);
         this.#removeFromQueue(nextQueuedEntry.id);
       } catch (error) {
         // Прострочена сесія - не відмова. Запис лишається в
@@ -335,40 +345,47 @@ class BudgetStore {
 
   /** @returns {Promise<void>} */
   async #reloadSnapshot() {
-    this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods()));
+    this.#applySnapshot(
+      await fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods(), this.#limitPeriod()),
+      this.#limitPeriod(),
+    );
   }
 
   /**
-   * Місяці, які хочемо отримати від сервера: ті, що вже в пам'яті.
+   * Місяці, які хочемо отримати від сервера: уже завантажені плюс
+   * відкритий і той, що йому передуває.
    *
    * Запит лише цих місяців — інакше серверний знімок витер би те,
-   * що ми вже завантажили. Коли пам'ять порожня (перший вхід у
-   * цій сесії), беремо поточний місяць.
+   * що ми вже завантажили. Відкритий місяць додається окремо: він мусить
+   * бути на екрані, навіть якщо його витіснив з пам'яті власний запит.
    *
-   * Обраний місяць додається окремо: він мусить бути на екрані, на
-   *вітьмуть тощо — навіть якщо його витіснив з пам'яті власний запит.
+   * Завжди повертає повний набір, тож одного виклику synchronize()
+   * вистачає й на перший вхід із довільним місяцем — окремий запит
+   * за відкритим місяцем уже не потрібен.
    *
    * @returns {Array<string>}
    */
   #requestedPeriods() {
-    const loadedPeriods = this.#state.loadedPeriods;
+    const activePeriod = this.#activePeriodKey ?? currentPeriodKey();
+    const missingForActivePeriod = withPreviousPeriod(activePeriod)
+      .filter((periodKey) => !this.#state.loadedPeriods.includes(periodKey));
 
-    if (loadedPeriods.length === 0) {
-      const currentMonth = currentPeriodKey();
-      return withPreviousPeriod(currentMonth);
-    }
-
-    if (!this.#activePeriodKey || loadedPeriods.includes(this.#activePeriodKey)) {
-      return loadedPeriods;
-    }
-
-    return trimToLimit(
-      [...loadedPeriods, this.#activePeriodKey],
-      [this.#activePeriodKey],
-      MAX_LOADED_PERIODS,
-    );
+    return [...new Set([...this.#state.loadedPeriods, ...missingForActivePeriod])];
   }
 
+  /**
+   * Місяць, для якого показуємо бюджет: той, що відкритий на екрані.
+   *
+   * Ліміти надсилаються окремо від операцій саме тому, що операції
+   * потрібні за два місяці, а бюджет — лише за один. Узяти ліміти з
+   * усіх запитаних місяців означало б бачити жовтневий бюджет і в
+   * вересні, де його не задавали.
+   *
+   * @returns {string}
+   */
+  #limitPeriod() {
+    return this.#activePeriodKey ?? currentPeriodKey();
+  }
   /**
    * Запам'ятовує, який місяць користувач дивиться.
    *
@@ -405,7 +422,16 @@ class BudgetStore {
     if (!this.#sessionToken) return;
 
     const neededPeriods = withPreviousPeriod(periodKey);
-    if (neededPeriods.every((needed) => this.isPeriodLoaded(needed))) return;
+    const areMonthsLoaded = neededPeriods.every((needed) => this.isPeriodLoaded(needed));
+    const knownCategories = this.#categoriesByLimitPeriod.get(periodKey);
+
+    // Місяць уже в пам'яті й його ліміти ми вже бачили — повертаємося
+    // миттєво, без запиту. Ліміти тримаємо окремо від місяців, бо
+    // вони змінюються разом з тим, який місяць відкритий.
+    if (areMonthsLoaded && knownCategories) {
+      this.#patch({ categories: knownCategories });
+      return;
+    }
 
     // Не дублювати роботу, поки запит із тими самими місяцями ще
     // в дорозі. Швидке перемикання двома кліками не має породжувати
@@ -416,7 +442,8 @@ class BudgetStore {
     this.#patch({ syncState: SYNC_STATE.loading });
 
     try {
-      this.#applySnapshot(await fetchBudgetSnapshot(this.#sessionToken, neededPeriods));
+      const snapshot = await fetchBudgetSnapshot(this.#sessionToken, neededPeriods, periodKey);
+      this.#applySnapshot(snapshot, periodKey);
       this.#patchSyncStateFromQueue();
     } catch (error) {
       this.#handleSyncError(error);
@@ -437,12 +464,16 @@ class BudgetStore {
    * версія скрипта) — перечитуємо окремим запитом, щоб не ламалася.
    *
    * @param {object | undefined} snapshot
+   * @param {string} limitPeriod — місяць, чиї ліміти прийшли у знімку
    */
-  #applySnapshot(snapshot) {
+  #applySnapshot(snapshot, limitPeriod) {
     if (!snapshot) return false;
 
     const coveredPeriods = readCoveredPeriods(snapshot);
     if (coveredPeriods.length === 0) return false;
+
+    const categories = snapshot.categories ?? [];
+    this.#categoriesByLimitPeriod.set(limitPeriod, categories);
 
     const snapshotTransactions = snapshot.transactions ?? [];
     const knownIds = new Set(snapshotTransactions.map((transaction) => transaction.id));
@@ -471,7 +502,7 @@ class BudgetStore {
 
     const nextState = {
       viewer: snapshot.viewer ?? ANONYMOUS_VIEWER,
-      categories: snapshot.categories?.length ? snapshot.categories : FALLBACK_CATEGORIES,
+      categories,
       transactions,
       loadedPeriods,
       lastSyncedAt: new Date().toISOString(),

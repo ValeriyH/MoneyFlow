@@ -139,18 +139,6 @@
       <section class="column column--entry" data-panel="entry">
         <form class="card entry-card" id="entryForm" novalidate>
 
-          <div class="segmented" role="radiogroup" aria-label="Тип операції" data-active-kind="expense">
-            <button class="segmented__option is-active" type="button"
-                    id="kindExpenseButton" data-kind="expense" role="radio" aria-checked="true">
-              Витрата
-            </button>
-            <button class="segmented__option" type="button"
-                    id="kindIncomeButton" data-kind="income" role="radio" aria-checked="false">
-              Дохід
-            </button>
-            <span class="segmented__thumb" aria-hidden="true"></span>
-          </div>
-
           <div class="field field--amount">
             <label class="field__label" for="entryAmountInput">Сума, ₴</label>
 
@@ -178,6 +166,10 @@
           <fieldset class="category-field">
             <legend class="field__label">Категорія</legend>
             <div class="chip-grid" id="categoryChips" role="radiogroup" aria-label="Категорія"></div>
+            <p class="card__empty" id="categoryChipsEmpty" hidden>
+              Активних категорій немає. Заповніть аркуш <code>Categories</code>
+              у таблиці — і переконайтеся, що у колонці «Активна» порожньо або «Так».
+            </p>
             <p class="field__error" id="entryCategoryError" hidden></p>
           </fieldset>
 
@@ -227,9 +219,9 @@
                   <span class="metric__label">Витрати</span>
                   <span class="metric__value" id="expenseTotalValue">—</span>
                 </div>
-                <div class="metric metric--income">
-                  <span class="metric__label">Доходи</span>
-                  <span class="metric__value" id="incomeTotalValue">—</span>
+                <div class="metric metric--budget">
+                  <span class="metric__label">Бюджет</span>
+                  <span class="metric__value" id="budgetTotalValue">—</span>
                 </div>
               </div>
 
@@ -272,8 +264,8 @@
             <div class="card__body-inner">
               <div class="budget-list" id="budgetPanelList"></div>
               <p class="card__empty" id="budgetEmptyMessage" hidden>
-                Ліміти ще не задані. Відкрийте аркуш <code>Categories</code> у таблиці
-                і заповніть стовпець «Ліміт, ₴».
+                Для цього місяця бюджет ще не задано. Відкрийте аркуш
+                <code>BudgetLimits</code> і додайте рядок: місяць, категорія, сума.
               </p>
             </div>
           </div>

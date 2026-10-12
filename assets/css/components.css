@@ -264,7 +264,7 @@
 }
 
 .requirements__item.is-met {
-  color: var(--color-income);
+  color: var(--color-positive);
 }
 
 .requirements__item.is-met::before {
@@ -353,51 +353,18 @@ select.field__input {
 }
 
 /* ── Перемикач типу операції ───────────────────────────────────────────── */
-
-.segmented {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  padding: 4px;
-  margin-bottom: var(--space-5);
-  background: var(--color-surface-muted);
-  border-radius: var(--radius-md);
-}
-
-.segmented__option {
-  position: relative;
-  z-index: 1;
-  padding: 9px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-secondary);
-  background: none;
-  border: none;
-  border-radius: calc(var(--radius-md) - 4px);
-  transition: color var(--motion-fast);
-}
-
-.segmented__option.is-active {
-  color: var(--color-text-primary);
-}
-
-.segmented__thumb {
-  position: absolute;
-  z-index: 0;
-  top: 4px;
-  bottom: 4px;
-  left: 4px;
-  width: calc(50% - 6px);
-  background: var(--color-surface);
-  border-radius: calc(var(--radius-md) - 4px);
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
-  transition: transform var(--motion-base);
-}
-
-.segmented[data-active-kind="income"] .segmented__thumb {
-  transform: translateX(calc(100% + 4px));
-}
+/*
+ * Видалено разом із вкладкою «Дохід»: вводяться лише витрати,
+ * тож перемикати між типами більше нема чого.
+ * Закоментовано, а не видалено — раптом знадобиться знову,
+ * і не доведеться шукати за CSS.
+ *
+ * .segmented { ... }
+ * .segmented__option { ... }
+ * .segmented__option.is-active { ... }
+ * .segmented__thumb { ... }
+ * .segmented[data-active-kind="income"] .segmented__thumb { ... }
+ */
 
 /* ── Профіль користувача ────────────────────────────────────────────────── */
 
@@ -578,7 +545,7 @@ select.field__input {
   text-align: center;
 }
 
-.entry-card__status[data-tone="success"] { color: var(--color-income); }
+.entry-card__status[data-tone="success"] { color: var(--color-positive); }
 .entry-card__status[data-tone="error"]   { color: var(--color-expense); }
 .entry-card__status[data-tone="warning"] { color: var(--color-warning); }
 .entry-card__status[data-tone="pending"] { color: var(--color-text-secondary); }
@@ -612,9 +579,9 @@ select.field__input {
   border-radius: 50%;
 }
 
-.sync-indicator[data-state="synced"]  { color: var(--color-income); }
+.sync-indicator[data-state="synced"]  { color: var(--color-positive); }
 .sync-indicator[data-state="synced"] .sync-indicator__dot {
-  background: var(--color-income);
+  background: var(--color-positive);
 }
 
 .sync-indicator[data-state="pending"] { color: var(--color-warning); }
@@ -669,7 +636,7 @@ select.field__input {
   letter-spacing: -0.03em;
 }
 
-.balance-block__value[data-tone="positive"] { color: var(--color-income); }
+.balance-block__value[data-tone="positive"] { color: var(--color-positive); }
 .balance-block__value[data-tone="negative"] { color: var(--color-expense); }
 
 .balance-block__meta {
@@ -709,7 +676,7 @@ select.field__input {
 }
 
 .metric--expense .metric__value { color: var(--color-expense); }
-.metric--income .metric__value  { color: var(--color-income); }
+.metric--budget  .metric__value { color: var(--color-text-primary); }
 
 .fact-list {
   display: flex;
@@ -739,7 +706,7 @@ select.field__input {
   text-align: right;
 }
 
-.fact dd[data-tone="positive"] { color: var(--color-income); }
+.fact dd[data-tone="positive"] { color: var(--color-positive); }
 .fact dd[data-tone="negative"] { color: var(--color-expense); }
 
 /* ── Кільцевий графік ───────────────────────────────────────────────────── */
@@ -873,7 +840,7 @@ select.field__input {
   transition: width var(--motion-base);
 }
 
-.budget-item[data-status="safe"] .budget-item__fill { background: var(--color-income); }
+.budget-item[data-status="safe"] .budget-item__fill { background: var(--color-positive); }
 .budget-item[data-status="warning"] .budget-item__fill { background: var(--color-warning); }
 .budget-item[data-status="exceeded"] .budget-item__fill { background: var(--color-expense); }
 
@@ -949,8 +916,8 @@ select.field__input {
   white-space: nowrap;
 }
 
-.transaction__amount[data-kind="income"]  { color: var(--color-income); }
-.transaction__amount[data-kind="expense"] { color: var(--color-text-primary); }
+/* Правила .transaction__amount[data-kind="…"] видалено разом із типами
+ * операцій: у списку лише витрати, тож колір один на всіх. */
 
 .transaction__delete {
   flex-shrink: 0;
@@ -996,7 +963,7 @@ select.field__input {
   animation: toast-in var(--motion-base);
 }
 
-.toast[data-tone="success"] { background: var(--color-income); }
+.toast[data-tone="success"] { background: var(--color-positive); }
 .toast[data-tone="error"]   { background: var(--color-expense); }
 .toast[data-tone="warning"] { background: var(--color-warning); }
 

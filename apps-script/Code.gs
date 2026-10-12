@@ -22,11 +22,11 @@
 
 const SHEET_TRANSACTIONS = 'Transactions';
 const SHEET_CATEGORIES = 'Categories';
+const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
 
 const HEADER_ID = 'ID';
 const HEADER_DATE = 'Дата';
-const HEADER_KIND = 'Тип';
 const HEADER_CATEGORY = 'Категорія';
 const HEADER_AMOUNT = 'Сума';
 const HEADER_USER = 'Користувач';
@@ -34,10 +34,13 @@ const HEADER_NOTE = 'Нотатка';
 const HEADER_RECORDED_AT = 'Записано';
 
 const HEADER_CATEGORY_NAME = 'Назва';
-const HEADER_CATEGORY_KIND = 'Тип';
 const HEADER_CATEGORY_ICON = 'Іконка';
 const HEADER_CATEGORY_COLOR = 'Колір';
-const HEADER_CATEGORY_LIMIT = 'Ліміт, ₴';
+const HEADER_CATEGORY_ACTIVE = 'Активна';
+
+const HEADER_LIMIT_PERIOD = 'Місяць';
+const HEADER_LIMIT_CATEGORY = 'Категорія';
+const HEADER_LIMIT_AMOUNT = 'Ліміт, ₴';
 
 const HEADER_USER_NAME = 'Ім\'я';
 const HEADER_USER_COLOR = 'Колір';
@@ -54,13 +57,16 @@ const HEADER_USER_ACTIVE = 'Активний';
  * ледь не втратили дані.
  */
 const REQUIRED_TRANSACTION_COLUMNS = [
-  HEADER_ID, HEADER_DATE, HEADER_KIND, HEADER_CATEGORY,
+  HEADER_ID, HEADER_DATE, HEADER_CATEGORY,
   HEADER_AMOUNT, HEADER_USER, HEADER_NOTE, HEADER_RECORDED_AT,
 ];
 
 const REQUIRED_CATEGORY_COLUMNS = [
-  HEADER_CATEGORY_NAME, HEADER_CATEGORY_KIND, HEADER_CATEGORY_ICON,
-  HEADER_CATEGORY_COLOR, HEADER_CATEGORY_LIMIT,
+  HEADER_CATEGORY_NAME, HEADER_CATEGORY_ICON, HEADER_CATEGORY_COLOR, HEADER_CATEGORY_ACTIVE,
+];
+
+const REQUIRED_LIMIT_COLUMNS = [
+  HEADER_LIMIT_PERIOD, HEADER_LIMIT_CATEGORY, HEADER_LIMIT_AMOUNT,
 ];
 
 /*
@@ -85,9 +91,6 @@ const PERIOD_ROW_WINDOW_PADDING = 60;
 const REQUIRED_USER_COLUMNS = [
   HEADER_USER_NAME, HEADER_USER_COLOR, HEADER_USER_PASSWORD_HASH, HEADER_USER_ACTIVE,
 ];
-
-const KIND_EXPENSE = 'Витрата';
-const KIND_INCOME = 'Дохід';
 
 /* ── Самостійна реєстрація ──────────────────────────────────────────────── */
 
@@ -153,10 +156,11 @@ function doPost(request) {
 
     const viewer = authenticateSession(payload.sessionToken);
     const periods = parsePeriodsList(payload.periods);
+    const limitPeriod = parseLimitPeriod(payload.limitPeriod);
 
     switch (payload.action) {
       case 'loadSnapshot':
-        return respondWithJson(Object.assign({ ok: true }, buildSnapshot(viewer, periods)));
+        return respondWithJson(Object.assign({ ok: true }, buildSnapshot(viewer, periods, limitPeriod)));
 
       case 'addTransaction':
         return respondWithJson({
@@ -164,7 +168,7 @@ function doPost(request) {
           transaction: appendTransaction(payload.transaction, viewer),
           // Повертаємо оновлені дані одразу: інакше клієнту
           // довелося б робити другий запит і чекати ще ~3 секунди.
-          snapshot: buildSnapshot(viewer, periods),
+          snapshot: buildSnapshot(viewer, periods, limitPeriod),
         });
 
       case 'deleteTransaction':
@@ -172,7 +176,7 @@ function doPost(request) {
         return respondWithJson({
           ok: true,
           deletedId: String(payload.transactionId || '').trim(),
-          snapshot: buildSnapshot(viewer, periods),
+          snapshot: buildSnapshot(viewer, periods, limitPeriod),
         });
 
       default:
@@ -181,6 +185,25 @@ function doPost(request) {
   } catch (error) {
     return respondWithError(error);
   }
+}
+
+/**
+ * Місяць, для якого клієнт хоче бачити бюджет.
+ *
+ * Це завжди ОДИН місяць — той, що відкритий на екрані. Навіщо окремо
+ * від `periods`: запит іде щонайменше на два місяці (відкритий і
+ * попередній, для порівняння), а клієнт тримає лише один масив
+ * категорій. Якщо взяти ліміти з обох місяців, то жовтневий ліміт
+ * показувався б і в вересні, де його ніхто не задавав.
+ *
+ * Невірне або відсутнє значення — не помилка: покажемо поточний
+ * місяць. Це лише цифра на екрані, не дані.
+ *
+ * @param {unknown} rawValue
+ * @returns {string}
+ */
+function parseLimitPeriod(rawValue) {
+  return toPeriodKey(rawValue) || currentPeriodKey();
 }
 
 /**
@@ -249,14 +272,15 @@ function parsePeriodsList(rawPeriods) {
  * місяці прийшли, і замінює ними свої; решту не чіпає.
  *
  * @param {BudgetUser} viewer
- * @param {Array<string>} periods
+ * @param {Array<string>} periods — операції за цими місяцями
+ * @param {string} limitPeriod — ліміти саме цього місяця
  * @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, transactions: Array<object> }}
  */
-function buildSnapshot(viewer, periods) {
+function buildSnapshot(viewer, periods, limitPeriod) {
   return {
     serverTime: new Date().toISOString(),
     viewer: { name: viewer.name, color: viewer.color },
-    categories: readCategories(),
+    categories: readCategoriesWithLimits([limitPeriod]),
     periods: periods,
     transactions: readTransactions(periods),
   };
@@ -584,16 +608,98 @@ function removeUser(userName) {
 
 /* ── Читання даних ──────────────────────────────────────────────────────── */
 
-/** @returns {Array<object>} */
+/**
+ * Ліміти категорій за вказаними місяцями, у вигляді «категорія → сума».
+ *
+ * Береться перший збіг для пари «місяць + категорія»: якщо рядок
+ * випадково продублювали, та сама категорія не потрапить у бюджет двічі.
+ *
+ * @param {Array<string>} periods — ключі «РРРР-ММ»
+ * @returns {Map<string, number>}
+ */
+function readBudgetLimitsByCategory(periods) {
+  const limitsByCategoryName = new Map();
+
+  for (const record of readSheetAsRecords(SHEET_BUDGET_LIMITS, REQUIRED_LIMIT_COLUMNS)) {
+    const rawPeriod = record[HEADER_LIMIT_PERIOD];
+    const rawPeriodText = String(rawPeriod === undefined || rawPeriod === null ? '' : rawPeriod).trim();
+    if (rawPeriodText === '') continue;
+
+    const period = toPeriodKey(rawPeriod);
+
+    // Людина написала щось у місяць, а прочитати не вдалося. Мовчки
+    // пропустити такий рядок означало б «Бюджет = 0» без жодної
+    // підказки — саме те, чого тут уникаємо.
+    if (!period) {
+      throw new RequestError(
+        'У аркуші ' + SHEET_BUDGET_LIMITS + ' не вдалося прочитати місяць у значенні ' +
+        '«' + rawPeriodText + '». Очікується «2026-10» текстом або дата 01.10.2026.',
+        'SERVER_ERROR',
+      );
+    }
+
+    const categoryName = String(record[HEADER_LIMIT_CATEGORY] || '').trim();
+    const limit = toPositiveNumber(record[HEADER_LIMIT_AMOUNT]);
+
+    if (!categoryName || !limit) continue;
+    if (periods.indexOf(period) === -1) continue;
+    if (limitsByCategoryName.has(categoryName)) continue;
+
+    limitsByCategoryName.set(categoryName, limit);
+  }
+
+  return limitsByCategoryName;
+}
+
+/**
+ * Каталог категорій із лімітами на потрібні місяці.
+ *
+ * Категорія без рядка в `BudgetLimits` лишається в каталозі без ліміта:
+ * вона доступна для введення витрат, але не входить у бюджет.
+ *
+ * @param {Array<string>} periods — ключі «РРРР-ММ»
+ * @returns {Array<object>}
+ * @throws {RequestError} якщо є ліміт на невідому категорію
+ */
+function readCategoriesWithLimits(periods) {
+  const categories = readCategories();
+  const limitsByCategoryName = readBudgetLimitsByCategory(periods);
+
+  for (const categoryName of limitsByCategoryName.keys()) {
+    if (categories.some((category) => category.name === categoryName)) continue;
+
+    throw new RequestError(
+      'Є ліміт для категорії «' + categoryName + '», але такої категорії в аркуші ' +
+      SHEET_CATEGORIES + ' немає. Перейменуйте її в обох аркушах або видаліть зайвий ' +
+      'рядок — інакше бюджет рахуватиметься неправильно.',
+      'SERVER_ERROR',
+    );
+  }
+
+  return categories.map(function (category) {
+    return Object.assign({}, category, { limit: limitsByCategoryName.get(category.name) ?? 0 });
+  });
+}
+
+/**
+ * Каталог категорій — без лімітів.
+ *
+ * Ліміти живуть в окремому аркуші, бо вони належать місяцю, а не
+ * категорії. Тому тут лише те, що не змінюється: назва, іконка,
+ * колір і прапорець активності.
+ *
+ * @returns {Array<{ name: string, icon: string, color: string, isActive: string }>}
+ */
 function readCategories() {
   return readSheetAsRecords(SHEET_CATEGORIES, REQUIRED_CATEGORY_COLUMNS)
     .map(function (record, index) {
       return {
         name: String(record[HEADER_CATEGORY_NAME] || '').trim(),
-        kind: toApiKind(record[HEADER_CATEGORY_KIND]),
         icon: String(record[HEADER_CATEGORY_ICON] || '•').trim(),
         color: String(record[HEADER_CATEGORY_COLOR] || '#8b95a8').trim(),
-        limit: toPositiveNumber(record[HEADER_CATEGORY_LIMIT]),
+        isActive: record[HEADER_CATEGORY_ACTIVE] === undefined
+          ? ''
+          : String(record[HEADER_CATEGORY_ACTIVE]).trim(),
         order: index,
       };
     })
@@ -660,7 +766,6 @@ function readTransactions(periods) {
     transactions.push({
       id: String(record[HEADER_ID] || '').trim() || Utilities.getUuid(),
       occurredOn: occurredOn,
-      kind: toApiKind(record[HEADER_KIND]),
       category: String(record[HEADER_CATEGORY] || 'Інше').trim(),
       amount: amount,
       user: String(record[HEADER_USER] || '').trim(),
@@ -741,11 +846,6 @@ function appendTransaction(payload, viewer) {
     throw new RequestError('Не вказано категорію', 'BAD_REQUEST');
   }
 
-  // Тип приїмаємо лише два машинні значення. normalizeKind уміє
-  // багато синонімів для читання з таблиці, але запит від клієнта
-  // має бути однозначним: невідомий тип — помилка, а не витрата
-  // за замовчуванням.
-  const transactionKind = requireKnownKind(payload.kind);
   const transactionId = String(payload.id || '').trim() || Utilities.getUuid();
   const note = String(payload.note || '').trim().slice(0, 200);
 
@@ -754,13 +854,9 @@ function appendTransaction(payload, viewer) {
   const indexByName = transactionsHeader.index;
   requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
 
-  // Обидва записи в таблицю і в відповідь клієнту.
-  // У відповіді тип машинний: клієнт порівнює його з 'expense'/'income'.
-  const apiKind = toApiKind(transactionKind);
   const createdTransaction = {
     id: transactionId,
     occurredOn: occurredOn,
-    kind: apiKind,
     category: categoryName,
     amount: amount,
     user: viewer.name,
@@ -823,30 +919,6 @@ function findTransactionRowIndexById(transactionsSheet, transactionId, indexByNa
   }
 
   return -1;
-}
-
-/**
- * Тип операції з запиту клієнта: лише 'expense' або 'income'.
- *
- * normalizeKind навмисно приймає багато синонімів — щоб читати
- * значення з таблиці очима. З клієнта ж приходить одне машинне
- * значення, і невідоме тут означає помилку, а не тихе
- * перетворення будь-чого на витрату.
- *
- * @param {unknown} rawValue
- * @returns {string} KIND_EXPENSE або KIND_INCOME
- * @throws {RequestError}
- */
-function requireKnownKind(rawValue) {
-  const normalizedValue = String(rawValue || '').trim().toLowerCase();
-
-  if (normalizedValue === 'expense') return KIND_EXPENSE;
-  if (normalizedValue === 'income') return KIND_INCOME;
-
-  throw new RequestError(
-    'Невідомий тип операції: ' + rawValue + '. Очікується expense або income.',
-    'BAD_REQUEST',
-  );
 }
 
 /**
@@ -1076,6 +1148,34 @@ function toPositiveNumber(rawValue) {
 }
 
 /**
+ * Ключ місяця «РРРР-ММ» із будь-якого вигляду, у якому його могли ввести.
+ *
+ * Google Sheets перетворює «2026-10» на дату, якщо колонка не
+ * відформатована як текст. Тоді в таблицю приходить об'єкт Date, а
+ * String() з нього дає «Mon Oct 01 2026…» — ключ не збігається
+ * ні з чим, і рядок непомітно випадає з бюджету.
+ *
+ * Тому приймаємо три вигляди: об'єкт Date, «2026-10» і «2026-10-01».
+ *
+ * @param {unknown} rawValue
+ * @returns {string} «2026-10» або порожній рядок, якщо розібрати не вдалося
+ */
+function toPeriodKey(rawValue) {
+  if (Object.prototype.toString.call(rawValue) === '[object Date]') {
+    return Utilities.formatDate(rawValue, 'Europe/Kyiv', 'yyyy-MM');
+  }
+
+  const textValue = String(rawValue === undefined || rawValue === null ? '' : rawValue).trim();
+  const periodMatch = textValue.match(/^(\d{4})-(\d{2})(?:-\d{2})?/);
+  if (!periodMatch) return '';
+
+  const monthNumber = Number(periodMatch[2]);
+  if (monthNumber < 1 || monthNumber > 12) return '';
+
+  return periodMatch[1] + '-' + periodMatch[2];
+}
+
+/**
  * Приймає «2026-10-05», дату з таблиці або ISO-рядок.
  * @param {unknown} rawValue
  * @returns {string} «2026-10-05» або порожній рядок
@@ -1108,36 +1208,6 @@ function toIsoTimestamp(rawValue) {
 
   const parsedDate = new Date(String(rawValue || ''));
   return isNaN(parsedDate.getTime()) ? '' : parsedDate.toISOString();
-}
-
-/**
- * Приводить будь-яке подане значення до канонічного виду «Витрата»/«Дохід».
- * Це те, що лежить у самій таблиці - так його й видно людині.
- *
- * @param {unknown} rawValue
- * @returns {string}
- */
-function normalizeKind(rawValue) {
-  const normalizedValue = String(rawValue || '').trim().toLowerCase();
-
-  const incomeAliases = ['дохід', 'доход', 'income', 'in', 'зарплата', '+'];
-  if (incomeAliases.indexOf(normalizedValue) !== -1) return KIND_INCOME;
-
-  return KIND_EXPENSE;
-}
-
-/**
- * Те саме, але для відповіді клієнту.
- *
- * У таблиці тип зберігається українською - щоб було читабельно очима.
- * У JSON він мусить бути стабільним машинним значенням: клієнт порівнює
- * його з рядками без будь-якого перекладу, і «Витрата» != 'expense'.
- *
- * @param {unknown} rawValue
- * @returns {'expense' | 'income'}
- */
-function toApiKind(rawValue) {
-  return normalizeKind(rawValue) === KIND_INCOME ? 'income' : 'expense';
 }
 
 /* ── Відповіді та помилки ───────────────────────────────────────────────── */

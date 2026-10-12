@@ -47,18 +47,6 @@ export const STORAGE_KEYS = {
  */
 export const PENDING_ENTRIES_KEY_PREFIX = "moneyflow.pending-entries.";
 
-/** Тип операції. */
-export const TRANSACTION_KIND = {
-  expense: "expense",
-  income: "income",
-};
-
-/** Підписи типів операцій для інтерфейсу. */
-export const KIND_LABELS = {
-  [TRANSACTION_KIND.expense]: "витрата",
-  [TRANSACTION_KIND.income]: "дохід",
-};
-
 /** Стани синхронізації між браузером і Google Таблицею. */
 export const SYNC_STATE = {
   loading: "loading",
@@ -113,21 +101,3 @@ export const APP_VIEWS = {
 
 /** Розділ, який показується, коли в пам'яті нічого немає. */
 export const DEFAULT_APP_VIEW = APP_VIEWS.entry;
-
-/**
- * Категорії-заглушки. Використовуються лише тоді, коли аркуш `Categories`
- * у таблиці порожній — щоб форма була придатною до першого заповнення.
- */
-export const FALLBACK_CATEGORIES = [
-  { name: "Продукти",      kind: TRANSACTION_KIND.expense, icon: "🛒", color: "#0f9d58", limit: 0 },
-  { name: "Кафе/Ресторани",kind: TRANSACTION_KIND.expense, icon: "☕", color: "#d97706", limit: 0 },
-  { name: "Авто",          kind: TRANSACTION_KIND.expense, icon: "🚗", color: "#0891b2", limit: 0 },
-  { name: "Дім/Комуналка", kind: TRANSACTION_KIND.expense, icon: "🏠", color: "#2563eb", limit: 0 },
-  { name: "Здоров'я",      kind: TRANSACTION_KIND.expense, icon: "💊", color: "#db2777", limit: 0 },
-  { name: "Розваги",       kind: TRANSACTION_KIND.expense, icon: "🎬", color: "#7c3aed", limit: 0 },
-  { name: "Інше",          kind: TRANSACTION_KIND.expense, icon: "📦", color: "#5a6478", limit: 0 },
-  { name: "Зарплата",      kind: TRANSACTION_KIND.income,  icon: "💼", color: "#0f9d58", limit: 0 },
-  { name: "Премія",        kind: TRANSACTION_KIND.income,  icon: "🎁", color: "#65a30d", limit: 0 },
-  { name: "Підробіток",    kind: TRANSACTION_KIND.income,  icon: "💻", color: "#4f46e5", limit: 0 },
-  { name: "Інший дохід",   kind: TRANSACTION_KIND.income,  icon: "➕", color: "#64748b", limit: 0 },
-];

@@ -1,26 +1,24 @@
 /**
- * entryForm.js — картка вводу операції.
+ * entryForm.js — картка введення витрати.
  *
- * Відповідає за валідацію, перемикання типу операції, підстановку
- * списку категорій і передачу зібраних даних наверх через колбек.
- * Про відправку в Google нічого не знає — це робить store.
+ * Відповідає за валідацію, підстановку списку категорій і передачу
+ * зібраних даних наверх через колбек. Про відправку в Google нічого
+ * не знає — це робить store.
+ *
+ * Типу операції тут немає: доходи не вводяться взагалі, тому й
+ * перемикати між ними нічого.
  */
 
-import { TRANSACTION_KIND } from "../config.js";
 import { evaluateAmountExpression, canAppendOperator } from "../domain/amountExpression.js";
+import { filterActiveCategories } from "../domain/budget.js";
 import { formatCurrency } from "../domain/formatters.js";
 import { todayAsIsoDate } from "../domain/period.js";
-import { normalizeTransactionKind } from "../domain/statistics.js";
 import { clearChildren, createElement, findById, on, setVisibility, setStatusMessage } from "./dom.js";
 
 const MAX_SAFE_AMOUNT = 100_000_000;
 
 export function initEntryForm({ store, onSubmit }) {
   const formElement = findById("entryForm");
-
-  const segmentedElement = formElement.querySelector(".segmented");
-  const expenseKindButtonElement = findById("kindExpenseButton");
-  const incomeKindButtonElement = findById("kindIncomeButton");
 
   const amountInputElement = findById("entryAmountInput");
   const amountPreviewElement = findById("amountPreview");
@@ -30,6 +28,7 @@ export function initEntryForm({ store, onSubmit }) {
 
   const categoryChipsElement = findById("categoryChips");
   const categoryErrorElement = findById("entryCategoryError");
+  const categoryEmptyElement = findById("categoryChipsEmpty");
 
   const dateInputElement = findById("entryDateInput");
   const noteInputElement = findById("entryNoteInput");
@@ -39,12 +38,10 @@ export function initEntryForm({ store, onSubmit }) {
 
   /** Стан форми, який не зберігається в DOM-атрибутах. */
   const formState = {
-    kind: TRANSACTION_KIND.expense,
     selectedCategoryName: null,
   };
 
   initAmountEditor();
-  initKindSwitcher();
 
   on(formElement, "submit", handleSubmit);
 
@@ -115,35 +112,6 @@ export function initEntryForm({ store, onSubmit }) {
     setVisibility(amountPreviewElement, true);
   }
 
-  /* ── Перемикання типу операції ───────────────────────────────────────── */
-
-  function initKindSwitcher() {
-    segmentedElement.dataset.activeKind = formState.kind;
-
-    for (const kindButtonElement of [expenseKindButtonElement, incomeKindButtonElement]) {
-      on(kindButtonElement, "click", () => {
-        const selectedKind = kindButtonElement.dataset.kind;
-        if (selectedKind === formState.kind) return;
-
-        formState.kind = selectedKind;
-        segmentedElement.dataset.activeKind = selectedKind;
-
-        const isIncomeSelected = selectedKind === TRANSACTION_KIND.income;
-
-        expenseKindButtonElement.classList.toggle("is-active", !isIncomeSelected);
-        expenseKindButtonElement.setAttribute("aria-checked", String(!isIncomeSelected));
-        incomeKindButtonElement.classList.toggle("is-active", isIncomeSelected);
-        incomeKindButtonElement.setAttribute("aria-checked", String(isIncomeSelected));
-
-        submitButtonElement.textContent = isIncomeSelected ? 'Зберегти дохід' : 'Зберегти витрату';
-
-        formState.selectedCategoryName = null;
-        renderCategoryChips(store.getState().categories);
-        clearFieldError(categoryChipsElement, categoryErrorElement);
-      });
-    }
-  }
-
   /* ── Категорії ────────────────────────────────────────────────────────── */
 
   /**
@@ -158,19 +126,24 @@ export function initEntryForm({ store, onSubmit }) {
   }
 
   /**
+   * Показує лише активні категорії.
+   *
+   * Якщо активних немає — порожньо й окреме пояснення. Категорій
+   * «про запас» немає: вони приховуються саме тоді, коли в них
+   * не записують, а ліміт на них не задають.
+   *
    * @param {Array<object>} categories
    */
   function renderCategoryChips(categories) {
-    const categoriesOfCurrentKind = categories.filter(
-      (category) => normalizeTransactionKind(category.kind) === formState.kind,
-    );
-
-    // Якщо категорій цього типу немає в таблиці — показуємо перші з будь-яких,
-    // щоб форма лишалася придатною.
-    const categoriesToRender =
-      categoriesOfCurrentKind.length > 0 ? categoriesOfCurrentKind : categories.slice(0, 8);
+    const categoriesToRender = filterActiveCategories(categories);
 
     clearChildren(categoryChipsElement);
+
+    // Без активних категорій зберегти витрату неможливо, тож і кнопка
+    // не потрібна — інакше вона вела б у помилку валідації.
+    const hasCategories = categoriesToRender.length > 0;
+    submitButtonElement.disabled = !hasCategories;
+    setVisibility(categoryEmptyElement, !hasCategories);
 
     for (const category of categoriesToRender) {
       const categoryChipElement = createElement("button", {
@@ -281,7 +254,6 @@ export function initEntryForm({ store, onSubmit }) {
       isValid: true,
       draft: {
         amount: parsedExpression.value,
-        kind: formState.kind,
         category: selectedCategory,
         occurredOn: dateInputElement.value || todayAsIsoDate(),
         note: noteInputElement.value.trim(),

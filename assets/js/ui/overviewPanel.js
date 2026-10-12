@@ -1,9 +1,10 @@
 /**
- * overviewPanel.js — підсумки місяця: баланс, витрати, доходи,
+ * overviewPanel.js — підсумки місяця: залишок від бюджету, витрати,
  * середні за день, прогноз і динаміка до попереднього місяця,
  * а також кільцевий розподіл витрат по категоріях.
  */
 
+import { computeDailyAllowance } from "../domain/budget.js";
 import {
   describeChangeRate,
   formatCompactCurrency,
@@ -20,7 +21,7 @@ export function initOverviewPanel() {
   const balanceValueElement = findById("balanceValue");
   const balanceMetaElement = findById("balanceMeta");
   const expenseTotalValueElement = findById("expenseTotalValue");
-  const incomeTotalValueElement = findById("incomeTotalValue");
+  const budgetTotalValueElement = findById("budgetTotalValue");
   const dailyAverageValueElement = findById("dailyAverageValue");
   const projectionValueElement = findById("projectionValue");
   const monthOverMonthValueElement = findById("monthOverMonthValue");
@@ -42,32 +43,61 @@ export function initOverviewPanel() {
       referenceDate,
     );
 
-    renderBalance(summary);
+    renderBalance(summary, periodKey, referenceDate);
     renderTotals(summary);
     renderFacts(summary);
     renderCategoryDonut(summary);
   }
 
-  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
-  function renderBalance(summary) {
+  /**
+   * Головне число — залишок від бюджету. Під ним не «скільки операцій»,
+   * а практична порада: скільки можна витрачати на день, щоб вкластися.
+   * Рахується по загальному залишку, без розрізнення категорій.
+   *
+   * @param {ReturnType<typeof buildPeriodSummary>} summary
+   * @param {string} periodKey
+   * @param {Date} referenceDate
+   */
+  function renderBalance(summary, periodKey, referenceDate) {
     balanceValueElement.textContent = formatCurrency(summary.balance);
     balanceValueElement.dataset.tone = summary.balance >= 0 ? "positive" : "negative";
 
-    balanceMetaElement.textContent =
-      summary.transactionCount === 0
+    balanceMetaElement.textContent = buildBalanceMeta(summary, periodKey, referenceDate);
+  }
+
+  /**
+   * @param {ReturnType<typeof buildPeriodSummary>} summary
+   * @param {string} periodKey
+   * @param {Date} referenceDate
+   * @returns {string}
+   */
+  function buildBalanceMeta(summary, periodKey, referenceDate) {
+    const dailyAllowance = computeDailyAllowance(summary.balance, periodKey, referenceDate);
+
+    // Минулий місяць уже завершився — «на день можна» тут ні до чого,
+    // тож лишаємо те, що про нього правда: скільки в ньому операцій.
+    if (dailyAllowance === null) {
+      return summary.transactionCount === 0
         ? "Операцій за цей місяць ще немає"
         : `${summary.transactionCount} операцій за цей місяць`;
+    }
+
+    if (summary.balance < 0) {
+      return `Витрачено понад бюджет на ${formatCurrency(Math.abs(summary.balance))}`;
+    }
+
+    if (summary.balance === 0) return "Витрачено рівно весь бюджет";
+
+    return `Ліміт витрат на день ${formatCurrency(dailyAllowance)}`;
   }
 
   /** @param {ReturnType<typeof buildPeriodSummary>} summary */
   function renderTotals(summary) {
     expenseTotalValueElement.textContent = formatCurrency(summary.expenseTotal);
-    incomeTotalValueElement.textContent = formatCurrency(summary.incomeTotal);
+    budgetTotalValueElement.textContent = formatCurrency(summary.budgetTotal);
   }
 
-  /**
-   * @param {ReturnType<typeof buildPeriodSummary>} summary
-   */
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
   function renderFacts(summary) {
     dailyAverageValueElement.textContent = formatCurrency(summary.dailyAverageExpense);
 

@@ -170,15 +170,21 @@ export function requestUserRegistration(login, passwordHash) {
 /**
  * Завантажує знімок бюджету разом із тим, хто увійшов.
  *
- * `periods` — місяці, які клієнт уже тримає в пам'яті. Сервер
- * поверне тільки їх: так знімок на два десятки кілобайт не виростає
- * до мегабайтів, а вже завантажені місяці не треба перезапитувати.
+ * `periods` — місяці з операціями, які клієнт уже тримає в пам'яті.
+ * Сервер поверне тільки їх: так знімок на два десятки кілобайт не
+ * виростає до мегабайтів, а завантажені місяці не перезапитуються.
+ *
+ * `limitPeriod` — окремо, і це не випадковість. Операції потрібні
+ * за два місяці (відкритий і попередній — для порівняння), а ліміти
+ * мають бути лише для відкритого. Інакше жовтневий ліміт показувався
+ * б і в вересні, де його не задавали.
  *
  * @param {string} sessionToken
  * @param {Array<string>} periods
+ * @param {string} limitPeriod
  */
-export function fetchBudgetSnapshot(sessionToken, periods) {
-  return sendCommand({ action: "loadSnapshot", sessionToken, periods });
+export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
+  return sendCommand({ action: "loadSnapshot", sessionToken, periods, limitPeriod });
 }
 
 /**
@@ -187,10 +193,11 @@ export function fetchBudgetSnapshot(sessionToken, periods) {
  *
  * @param {string} sessionToken
  * @param {object} transactionPayload
- * @param {Array<string>} periods — ті самі, що й при читанні
+ * @param {Array<string>} periods
+ * @param {string} limitPeriod
  */
-export function submitTransaction(sessionToken, transactionPayload, periods) {
-  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods });
+export function submitTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
+  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
 }
 
 /**
@@ -198,7 +205,8 @@ export function submitTransaction(sessionToken, transactionPayload, periods) {
  * @param {string} sessionToken
  * @param {string} transactionId
  * @param {Array<string>} periods
+ * @param {string} limitPeriod
  */
-export function deleteTransaction(sessionToken, transactionId, periods) {
-  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods });
+export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
+  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
 }
