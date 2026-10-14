@@ -1,6 +1,6 @@
 /**
- * transactionList.js — історія операцій за обраний місяць
- * із можливістю видалити запис однією кнопкою.
+ * transactionList.js — транзакції за обраний місяць: видалити або
+ * переписати наявний запис однією кнопкою.
  */
 
 import { HISTORY_PAGE_SIZE } from "../config.js";
@@ -11,8 +11,9 @@ import { clearChildren, createElement, findById, on, setVisibility } from "./dom
 /**
  * @param {object} dependencies
  * @param {(transaction: object) => void} dependencies.onDeleteRequest
+ * @param {(transaction: object) => void} dependencies.onEditRequest
  */
-export function initTransactionList({ onDeleteRequest }) {
+export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   const listElement = findById("transactionList");
   const emptyMessageElement = findById("transactionListEmpty");
   const countBadgeElement = findById("historyCountBadge");
@@ -91,13 +92,26 @@ export function initTransactionList({ onDeleteRequest }) {
     });
 
     const deleteButtonElement = createElement("button", {
-      className: "transaction__delete",
+      className: "transaction__action",
       textContent: "✕",
       attributes: { type: "button", "aria-label": `Видалити операцію «${transaction.category}»` },
     });
     on(deleteButtonElement, "click", () => onDeleteRequest(transaction));
 
-    itemElement.append(iconElement, bodyElement, amountElement, deleteButtonElement);
+    // Правка йде у ту саму форму, що й додавання: окремий екран
+    // для неї означав би другу валідацію, другий розбір виразу суми
+    // й другий набір правил наповнення.
+    const editButtonElement = createElement("button", {
+      className: "transaction__action",
+      textContent: "✎",
+      attributes: { type: "button", "aria-label": `Редагувати операцію «${transaction.category}»` },
+    });
+    on(editButtonElement, "click", () => onEditRequest(transaction));
+
+    const actionsElement = createElement("span", { className: "transaction__actions" });
+    actionsElement.append(editButtonElement, deleteButtonElement);
+
+    itemElement.append(iconElement, bodyElement, amountElement, actionsElement);
     return itemElement;
   }
 

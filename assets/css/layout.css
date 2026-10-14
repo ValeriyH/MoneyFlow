@@ -44,7 +44,17 @@
   gap: var(--space-2);
 }
 
-/* ── Таби розділів (лише на вузьких екранах) ─────────────────────────── */
+/* ── Таби розділів ──────────────────────────────────────────────────────── */
+
+/* Таби живуть у правій колонці поруч із даними, які вони
+   перемикають. Тому вони потрібні на будь-якій ширині: на
+   вузькому екрані це єдиний спосіб дійти до іншого розділу,
+   на широкому — те саме, але без довгого скролу. */
+
+.app-main[data-active-view="dashboard"]    [data-panel]:not([data-panel="dashboard"]),
+.app-main[data-active-view="transactions"] [data-panel]:not([data-panel="transactions"]) {
+  display: none;
+}
 
 .view-tabs {
   display: flex;
@@ -237,20 +247,32 @@
     grid-template-columns: minmax(320px, 380px) 1fr;
     gap: var(--space-5);
   }
-
-  /* На широкому екрані все поміщається у дві колонки — таби зайві. */
-  .view-tabs {
-    display: none;
-  }
 }
 
 @media (max-width: 899px) {
-  /* Показуємо лише активну картку: скролити сторінку не доводиться. */
-  .app-main[data-active-view="entry"]    [data-panel]:not([data-panel="entry"]),
-  .app-main[data-active-view="overview"] [data-panel]:not([data-panel="overview"]),
-  .app-main[data-active-view="budget"]   [data-panel]:not([data-panel="budget"]),
-  .app-main[data-active-view="history"]  [data-panel]:not([data-panel="history"]) {
-    display: none;
+  /* На вузькому екрані колонки не потрібні: форма й так стоїть
+     над даними, а таби вже перемикають розділи. */
+  .column--entry {
+    position: static;
+  }
+
+  /* Розгорнуті категорії, дата й нотатка з'їдають майже весь
+     екран. Тому в згорнутому стані лишається одне поле суми
+     й кнопка — решта з'являється, як тільки почали вводити. */
+  .entry-card__details {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin: 0;
+    border: 0;
+    transition: max-height var(--motion-base), opacity var(--motion-fast), margin var(--motion-base);
+  }
+
+  .entry-card[data-form-state="expanded"] .entry-card__details {
+    max-height: 70vh;
+    margin-top: var(--space-4);
+    opacity: 1;
+    overflow-y: auto;
   }
 }
 

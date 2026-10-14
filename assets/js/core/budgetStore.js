@@ -18,6 +18,7 @@ import {
   deleteTransaction,
   fetchBudgetSnapshot,
   submitTransaction,
+  updateTransaction,
 } from "./apiClient.js";
 import {
   clearCachedSnapshot,
@@ -303,6 +304,29 @@ class BudgetStore {
   }
 
   /**
+ * Надсилає один запис черги відповідною дією.
+ *
+ * Дії три, але спільне в них одне: усі повертають оновлений знімок,
+ * тому `#sendQueuedEntries` не знає, яку саме дію надіслано.
+ *
+ * @param {object} queuedEntry
+ * @param {Array<string>} periods
+ * @param {string} limitPeriod
+ * @returns {Promise<{ snapshot: object }>}
+ */
+async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
+    if (queuedEntry.action === "delete") {
+      return deleteTransaction(this.#sessionToken, queuedEntry.transactionId, periods, limitPeriod);
+    }
+
+    if (queuedEntry.action === "update") {
+      return updateTransaction(this.#sessionToken, queuedEntry.transaction, periods, limitPeriod);
+    }
+
+    return submitTransaction(this.#sessionToken, queuedEntry.transaction, periods, limitPeriod);
+  }
+
+  /**
    * Бере по одному запиту з черги й перечитує список щоразу — тоді
    * запис, доданий під час відправки, теж підхопиться в цій самій
    * серії, а не залишиться на потім.
@@ -322,10 +346,8 @@ class BudgetStore {
       try {
         const periods = this.#requestedPeriods();
         const limitPeriod = this.#limitPeriod();
-        const response =
-          nextQueuedEntry.action === "delete"
-            ? await deleteTransaction(this.#sessionToken, nextQueuedEntry.transactionId, periods, limitPeriod)
-            : await submitTransaction(this.#sessionToken, nextQueuedEntry.transaction, periods, limitPeriod);
+
+        const response = await this.#sendQueuedEntry(nextQueuedEntry, periods, limitPeriod);
 
         this.#applySnapshot(response.snapshot, limitPeriod);
         this.#removeFromQueue(nextQueuedEntry.id);
@@ -335,7 +357,7 @@ class BudgetStore {
         if (isSessionExpired(error)) throw error;
 
         if (!isWorthRetrying(error)) {
-          this.#discardPendingEntry(nextQueuedEntry.id, nextQueuedEntry.transaction?.id);
+          this.#discardPendingEntry(nextQueuedEntry.id);
           continue;
         }
         throw error;
@@ -563,7 +585,7 @@ class BudgetStore {
       // Прострочена сесія - не відмова: запис лишається в
       // черзі й дійде після повторного входу.
       if (!isWorthRetrying(error) && !isSessionExpired(error)) {
-        this.#discardPendingEntry(queuedEntryId, transaction.id);
+        this.#discardPendingEntry(queuedEntryId);
         this.#patchSyncStateFromQueue();
       }
       return { deliveredImmediately: false, error };
@@ -594,6 +616,86 @@ class BudgetStore {
   }
 
   /**
+   * Переписує наявну операцію.
+   *
+   * Два випадки, і вони принципово різні:
+   *
+   *   запис уже в таблиці — надсилаємо дію `update`, оптимістично
+   *     міняємо його на місці; id лишається серверним, тож злиття зі
+   *     знімком замінить копію версією з таблиці;
+   *
+   *   запис досі в черзі — окремої дії не потрібно. Він ще не дійшов,
+   *     тож правимо чернетку прямо в черзі, інакше сервер отримав би
+   *     `update` для рядка, якого в таблиці немає.
+   *
+   * @param {string} transactionId
+   * @param {object} changes — сума, категорія, дата, нотатка
+   * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+   */
+  async updateTransaction(transactionId, changes) {
+    const previous = this.#state.transactions.find((candidate) => candidate.id === transactionId);
+
+    if (!previous) {
+      return { deliveredImmediately: false, error: new Error("Операцію вже не видно у списку") };
+    }
+
+    const queuedEntryId = previous.pending === true
+      ? this.#amendQueuedEntry(transactionId, changes)
+      : this.#enqueuePendingEntry({
+          action: "update",
+          transactionId,
+          transaction: { ...previous, ...changes, recordedAt: new Date().toISOString() },
+          // Попередні значення потрібні, щоб відкотити правку, якщо
+          // сервер відхилить її остаточно: інакше запис лишився б у
+          // списку з новими даними й назавжди «очікував би».
+          previous: { ...previous },
+        });
+
+    try {
+      await this.#flushPendingEntries();
+      this.#patch({ syncMessage: "" });
+      this.#patchSyncStateFromQueue();
+      return { deliveredImmediately: true, error: null };
+    } catch (error) {
+      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
+        this.#discardPendingEntry(queuedEntryId);
+        this.#patchSyncStateFromQueue();
+      }
+      return { deliveredImmediately: false, error };
+    }
+  }
+
+  /**
+   * Править чернетку запису, який ще не дійшов до сервера.
+   *
+   * Окремої дії в черзі не додається: запис створиться з новими
+   * значеннями, коли черга дійде до нього.
+   *
+   * @param {string} transactionId
+   * @param {object} changes
+   * @returns {string} id запису черги, який тепер описує цю правку
+   */
+  #amendQueuedEntry(transactionId, changes) {
+    const currentEntries = loadPendingEntries(this.#sessionLogin);
+    const amendedEntries = currentEntries.map((entry) =>
+      entry.id === transactionId
+        ? { ...entry, transaction: { ...entry.transaction, ...changes } }
+        : entry,
+    );
+
+    savePendingEntries(this.#sessionLogin, amendedEntries);
+
+    this.#patch({
+      pendingEntries: amendedEntries,
+      transactions: this.#state.transactions.map((candidate) =>
+        candidate.id === transactionId ? { ...candidate, ...changes } : candidate,
+      ),
+    });
+
+    return transactionId;
+  }
+
+  /**
    * Кладе дію в чергу й одразу показує її в UI.
    *
    * @param {object} pendingAction
@@ -611,7 +713,27 @@ class BudgetStore {
       this.#patch({
         pendingEntries: updatedEntries,
         syncState,
-        transactions: [...this.#state.transactions, { ...queuedEntry.transaction, pending: true }],
+        // id черги стає тимчасовим id запису. Без нього оптимістична
+        // копія лишалася б без ідентифікатора, і злиття зі знімком
+        // не могло б зрозуміти, що це вже той самий запис.
+        transactions: [
+          ...this.#state.transactions,
+          { ...queuedEntry.transaction, id: queuedEntry.id, pending: true },
+        ],
+      });
+    } else if (queuedEntry.action === "update") {
+      // Правка змінює запис на місці: id лишається серверним, тож
+      // злиття зі знімком замінить копію тією версією, що прийшла
+      // з таблиці. Прапорець pending гасить зліт з оригіналом,
+      // доки сервер не підтвердить.
+      this.#patch({
+        pendingEntries: updatedEntries,
+        syncState,
+        transactions: this.#state.transactions.map((candidate) =>
+          candidate.id === queuedEntry.transactionId
+            ? { ...queuedEntry.transaction, pending: true }
+            : candidate,
+        ),
       });
     } else {
       this.#patch({
@@ -626,30 +748,70 @@ class BudgetStore {
     return queuedEntry.id;
   }
 
+  /**
+   * Перезаписує кеш сторінки.
+   *
+   * `#applySnapshot` робить це разом із читанням, але оптимістична
+   * копія зникає вже після нього — у `#removeFromQueue`. Без
+   * повторного запису кеш зберігав би її назавжди: після
+   * перезавантаження сторінки злиття не могло б її розпізнати
+   * (її id належить черзі, а не таблиці), тож у списку з'явилися
+   * б два рядки про одну витрату.
+   */
+  #saveCache() {
+    saveCachedSnapshot({
+      viewer: this.#state.viewer,
+      categories: this.#state.categories,
+      transactions: this.#state.transactions,
+      loadedPeriods: this.#state.loadedPeriods,
+      lastSyncedAt: this.#state.lastSyncedAt,
+    });
+  }
+
   /** @param {string} queuedEntryId */
   #removeFromQueue(queuedEntryId) {
     const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
     savePendingEntries(this.#sessionLogin, remainingEntries);
-    this.#patch({ pendingEntries: remainingEntries });
+    // Запис з сервера вже в знімку, тому оптимістичну копію прибираємо:
+    // інакше в списку було б два рядки про одну й ту саму витрату.
+    this.#patch({
+      pendingEntries: remainingEntries,
+      transactions: this.#state.transactions.filter(
+        (transaction) => transaction.id !== queuedEntryId,
+      ),
+    });
+
+    this.#saveCache();
   }
 
   /**
    * Прибирає дію з черги назавжди — коли сервер відхилив її остаточно.
    * Повторювати такий запит безглуздо: він лише блокував би решту черги.
    *
+   * Для правки відкатуємо запис до попередніх значень: інакше він
+   * лишився б у списку з новими даними й прапорцем «очікує», хоча
+   * його вже ніхто не відправить.
+   *
    * @param {string} queuedEntryId
-   * @param {string} [transactionId] — для «add» ще й прибираємо з UI
    */
-  #discardPendingEntry(queuedEntryId, transactionId) {
+  #discardPendingEntry(queuedEntryId) {
+    const [discardedEntry] = loadPendingEntries(this.#sessionLogin)
+      .filter((entry) => entry.id === queuedEntryId);
     const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
     savePendingEntries(this.#sessionLogin, remainingEntries);
 
     this.#patch({
       pendingEntries: remainingEntries,
-      transactions: transactionId
-        ? this.#state.transactions.filter((candidate) => candidate.id !== transactionId)
-        : this.#state.transactions,
+      transactions: this.#state.transactions
+        .filter((transaction) => transaction.id !== queuedEntryId)
+        .map((transaction) =>
+          discardedEntry?.action === "update" && transaction.id === discardedEntry.transactionId
+            ? { ...discardedEntry.previous }
+            : transaction,
+        ),
     });
+
+    this.#saveCache();
   }
 
   /**

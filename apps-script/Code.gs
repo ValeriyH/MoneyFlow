@@ -5,6 +5,7 @@
  *   doPost(action=loadSnapshot)     — віддає знімок бюджету;
  *   doPost(action=addTransaction)   — додає операцію;
  *   doPost(action=deleteTransaction)— видаляє операцію.
+ *   doPost(action=updateTransaction)— переписує операцію на місці.
  *
  * Авторизація та сесії — в auth.gs: там пароль не залишає браузер,
  * а браузер зберігає лише підписаний сервером токен.
@@ -176,6 +177,13 @@ function doPost(request) {
         return respondWithJson({
           ok: true,
           deletedId: String(payload.transactionId || '').trim(),
+          snapshot: buildSnapshot(viewer, periods, limitPeriod),
+        });
+
+      case 'updateTransaction':
+        return respondWithJson({
+          ok: true,
+          transaction: updateTransaction(payload.transaction, viewer),
           snapshot: buildSnapshot(viewer, periods, limitPeriod),
         });
 
@@ -942,6 +950,87 @@ function deleteTransactionById(transactionId) {
   }
 
   transactionsSheet.deleteRow(rowIndex);
+}
+
+/**
+ * Оновлює існуючу операцію.
+ *
+ * Правила, які відрізняють її від додавання:
+ *
+ *   ID не змінюється - за ним запис уже пізнано в таблиці;
+ *   «Користувач» не змінюється - операцію внесла та людина, яка
+ *     зробила витрату, навіть якщо дату виправив хтось інший;
+ *   «Записано» переписується - це час останнього запису про рядок.
+ *
+ * @param {object} payload
+ * @returns {object} оновлена операція
+ */
+function updateTransaction(payload, viewer) {
+  if (!payload || typeof payload !== 'object') {
+    throw new RequestError('Не передано дані операції', 'BAD_REQUEST');
+  }
+
+  const transactionId = String(payload.id || '').trim();
+  if (transactionId === '') {
+    throw new RequestError('Не передано ID операції', 'BAD_REQUEST');
+  }
+
+  const amount = toPositiveNumber(payload.amount);
+  const occurredOn = toIsoDate(payload.occurredOn);
+
+  if (!amount) {
+    throw new RequestError('Сума має бути додатним числом', 'BAD_REQUEST');
+  }
+  if (!occurredOn) {
+    throw new RequestError('Не вдалося розпізнати дату: ' + payload.occurredOn, 'BAD_REQUEST');
+  }
+
+  const categoryName = String(payload.category || '').trim();
+  if (!categoryName) {
+    throw new RequestError('Не вказано категорію', 'BAD_REQUEST');
+  }
+
+  const note = String(payload.note || '').trim().slice(0, 200);
+
+  const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
+  const transactionsHeader = readSheetHeader(transactionsSheet);
+  const indexByName = transactionsHeader.index;
+  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
+
+  const rowIndex = findTransactionRowIndexById(transactionsSheet, transactionId, indexByName);
+  if (rowIndex === -1) {
+    throw new RequestError('Операцію з таким ID не знайдено', 'BAD_REQUEST');
+  }
+
+  const occurredOnColumnIndex = indexByName.get(HEADER_DATE.toLowerCase());
+  const categoryColumnIndex = indexByName.get(HEADER_CATEGORY.toLowerCase());
+  const amountColumnIndex = indexByName.get(HEADER_AMOUNT.toLowerCase());
+  const userColumnIndex = indexByName.get(HEADER_USER.toLowerCase());
+  const noteColumnIndex = indexByName.get(HEADER_NOTE.toLowerCase());
+  const recordedAtColumnIndex = indexByName.get(HEADER_RECORDED_AT.toLowerCase());
+
+  transactionsSheet.getRange(rowIndex, occurredOnColumnIndex + 1, 1, 1).setValue(occurredOn);
+  transactionsSheet.getRange(rowIndex, categoryColumnIndex + 1, 1, 1).setValue(categoryName);
+  transactionsSheet.getRange(rowIndex, amountColumnIndex + 1, 1, 1).setValue(amount);
+  transactionsSheet.getRange(rowIndex, noteColumnIndex + 1, 1, 1).setValue(note);
+  transactionsSheet.getRange(rowIndex, recordedAtColumnIndex + 1, 1, 1).setValue(new Date());
+
+  // Користувача не переписуємо, тож у відповідь повертаємо те, що
+  // реально лишилося в рядку. Ехо з payload було б брехнею: клієнт
+  // міг прислати будь-яке ім'я, а сервер його й так проігнорував.
+  const storedUser = String(
+    transactionsSheet.getRange(rowIndex, userColumnIndex + 1, 1, 1).getValue() ?? '',
+  ).trim();
+
+  return {
+    id: transactionId,
+    occurredOn: occurredOn,
+    category: categoryName,
+    amount: amount,
+    user: storedUser,
+    note: note,
+    recordedAt: new Date().toISOString(),
+  };
 }
 
 /* ── Допоміжні функції роботи з таблицею ────────────────────────────────── */

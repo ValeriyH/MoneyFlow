@@ -497,6 +497,13 @@ select.field__input {
   width: 100%;
 }
 
+/* Кнопка йде після блоку полів, а не після .field, тож правило
+   «сусідні поля з відступом» її не торкається. У згорнутому стані
+   це помітно: кнопка липне до поля суми. */
+.entry-card > .button--block {
+  margin-top: var(--space-4);
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -549,6 +556,107 @@ select.field__input {
 .entry-card__status[data-tone="error"]   { color: var(--color-expense); }
 .entry-card__status[data-tone="warning"] { color: var(--color-warning); }
 .entry-card__status[data-tone="pending"] { color: var(--color-text-secondary); }
+
+/* ── Редагування наявної операції ───────────────────────────────────────── */
+
+/* Банер живе першою точкою згорнутого блоку полів: він з'являється
+   тільки разом із категоріями, тож окремої кнопки « редагувати» не
+   потрібно — вона й так є в кожному рядку списку. */
+.entry-card__editing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+}
+
+.entry-card__editing-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-accent-strong);
+}
+
+.link-button {
+  flex: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  text-decoration: underline;
+}
+
+.link-button:hover { color: var(--color-text-primary); }
+
+/* ── Щойно записані ──────────────────────────────────────────────────────── */
+
+/* Підтвердження, що запис дійшов, ставиться під кнопкою збереження:
+   там, куди дивиться око одразу після натискання. Інакше довелося
+   б перемикатися на інший розділ, щоб перевірити результат. */
+
+.recent-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.recent-entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 3px 2px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.recent-entry__icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.recent-entry__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-entry__status {
+  flex: none;
+  font-size: 12px;
+  /* Той самий помаранчевий, що й «· очікує» у списку транзакцій:
+     запис у черзі має виглядати однаково скрізь. */
+  color: var(--color-warning);
+}
+
+.recent-entry[data-pending="false"] .recent-entry__status {
+  color: var(--color-positive);
+}
+
+.recent-entry__amount {
+  flex: none;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recent-entry[data-pending="true"] .recent-entry__amount {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
 
 /* ── Індикатор синхронізації ───────────────────────────────────────────── */
 
@@ -919,7 +1027,15 @@ select.field__input {
 /* Правила .transaction__amount[data-kind="…"] видалено разом із типами
  * операцій: у списку лише витрати, тож колір один на всіх. */
 
-.transaction__delete {
+/* Дві дії на рядок: «правити» і «видалити». На екранах без курсора
+   ховати їх за hover нема сенсу — там ховати просто не від чого. */
+.transaction__actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.transaction__action {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
@@ -933,12 +1049,23 @@ select.field__input {
               background-color var(--motion-fast);
 }
 
-.transaction:hover .transaction__delete,
-.transaction__delete:focus-visible {
+@media (hover: none) {
+  .transaction__action {
+    opacity: 1;
+  }
+}
+
+.transaction:hover .transaction__action,
+.transaction__action:focus-visible {
   opacity: 1;
 }
 
-.transaction__delete:hover {
+.transaction__action:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-muted);
+}
+
+.transaction__actions .transaction__action:last-child:hover {
   color: var(--color-expense);
   background: var(--color-expense-soft);
 }

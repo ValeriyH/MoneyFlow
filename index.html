@@ -116,28 +116,11 @@
       </div>
     </header>
 
-    <!-- Таби показуються лише на вузьких екранах; на широких усі
-         картки й так поміщаються в дві колонки. -->
-    <nav class="view-tabs" id="viewTabs" role="tablist" aria-label="Розділи бюджету">
-      <button class="view-tabs__tab is-active" type="button" role="tab" data-view="entry" aria-selected="true">
-        <span aria-hidden="true">✏️</span> Ввід
-      </button>
-      <button class="view-tabs__tab" type="button" role="tab" data-view="overview" aria-selected="false">
-        <span aria-hidden="true">📊</span> Підсумки
-      </button>
-      <button class="view-tabs__tab" type="button" role="tab" data-view="budget" aria-selected="false">
-        <span aria-hidden="true">🎯</span> Ліміти
-      </button>
-      <button class="view-tabs__tab" type="button" role="tab" data-view="history" aria-selected="false">
-        <span aria-hidden="true">🧾</span> Історія
-      </button>
-    </nav>
-
-    <main class="app-main" id="appMain" data-active-view="entry">
+    <main class="app-main" id="appMain" data-active-view="dashboard">
 
       <!-- ── Ліва колонка: ввід операції ──────────────────────────────── -->
-      <section class="column column--entry" data-panel="entry">
-        <form class="card entry-card" id="entryForm" novalidate>
+      <section class="column column--entry">
+        <form class="card entry-card" id="entryForm" data-form-state="compact" novalidate>
 
           <div class="field field--amount">
             <label class="field__label" for="entryAmountInput">Сума, ₴</label>
@@ -158,12 +141,19 @@
             <p class="amount-preview" id="amountPreview" aria-live="polite" hidden></p>
             <p class="field__error" id="entryAmountError" hidden></p>
 
-            <p class="field__hint">
+            <p class="field__hint" id="amountHint">
               Можна писати вираз: <code>120+80+50</code> або <code>1250/2</code>
             </p>
           </div>
 
-          <fieldset class="category-field">
+          <div class="entry-card__details" id="entryDetails">
+
+            <p class="entry-card__editing" id="entryEditingBanner" hidden>
+              <span class="entry-card__editing-text" id="entryEditingText"></span>
+              <button class="link-button" id="entryCancelEditButton" type="button">Скасувати</button>
+            </p>
+
+            <fieldset class="category-field">
             <legend class="field__label">Категорія</legend>
             <div class="chip-grid" id="categoryChips" role="radiogroup" aria-label="Категорія"></div>
             <p class="card__empty" id="categoryChipsEmpty" hidden>
@@ -182,22 +172,37 @@
             <span class="field__label">Нотатка <em class="field__optional">необов'язково</em></span>
             <input class="field__input" type="text" id="entryNoteInput"
                    placeholder="напр. АТБ, бензин" maxlength="120" autocomplete="off">
-          </label>
+            </label>
+
+          </div>
 
           <button class="button button--primary button--block" type="submit" id="entrySubmitButton">
             Зберегти витрату
           </button>
 
           <p class="entry-card__status" id="entryStatus" role="status" aria-live="polite"></p>
+
+          <ul class="recent-entries" id="recentEntries" aria-live="polite" hidden></ul>
         </form>
       </section>
 
-      <!-- ── Права колонка: аналітика ────────────────────────────────── -->
+      <!-- ── Права колонка: дані бюджету ──────────────────────────────── -->
       <section class="column column--insights">
+
+        <nav class="view-tabs" id="viewTabs" role="tablist" aria-label="Розділи бюджету">
+          <button class="view-tabs__tab is-active" type="button" role="tab"
+                  data-view="dashboard" aria-selected="true">
+            <span aria-hidden="true">📊</span> Дашборд
+          </button>
+          <button class="view-tabs__tab" type="button" role="tab"
+                  data-view="transactions" aria-selected="false">
+            <span aria-hidden="true">🧾</span> Транзакції
+          </button>
+        </nav>
 
         <p class="period-loading" id="periodLoading" hidden>Завантаження місяця…</p>
 
-        <article class="card card--collapsible" id="overviewPanel" data-panel="overview"
+        <article class="card card--collapsible" id="overviewPanel" data-panel="dashboard"
                  data-collapse-key="overview" data-collapsed="false">
           <button class="card__header card__header--button" type="button"
                   aria-expanded="true" aria-controls="overviewPanelBody">
@@ -249,7 +254,7 @@
           </div>
         </article>
 
-        <article class="card card--collapsible" id="budgetPanel" data-panel="budget"
+        <article class="card card--collapsible" id="budgetPanel" data-panel="dashboard"
                  data-collapse-key="budget" data-collapsed="false">
           <button class="card__header card__header--button" type="button"
                   aria-expanded="true" aria-controls="budgetPanelBody">
@@ -271,11 +276,11 @@
           </div>
         </article>
 
-        <article class="card card--collapsible" id="historyPanel" data-panel="history"
+        <article class="card card--collapsible" id="historyPanel" data-panel="transactions"
                  data-collapse-key="history" data-collapsed="false">
           <button class="card__header card__header--button" type="button"
                   aria-expanded="true" aria-controls="historyPanelBody">
-            <h2 class="card__title">Останні операції</h2>
+            <h2 class="card__title">Транзакції</h2>
             <span class="card__header-side">
               <span class="card__badge card__badge--muted" id="historyCountBadge">—</span>
               <span class="card__collapse-icon" aria-hidden="true"></span>

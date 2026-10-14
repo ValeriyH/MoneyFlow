@@ -89,15 +89,16 @@ export const HISTORY_PAGE_SIZE = 25;
 export const BUDGET_WARNING_THRESHOLD = 0.8;
 
 /**
- * Розділи, між якими перемикаються таби на вузьких екранах.
+ * Розділи, між якими перемикаються таби.
  * Ключ має збігатися з `data-panel` відповідної картки в index.html.
+ *
+ * Введення витрати розділом не є: форма присутня на екрані завжди,
+ * щоб результат введення був видно без перемикання.
  */
 export const APP_VIEWS = {
-  entry: "entry",
-  overview: "overview",
-  budget: "budget",
-  history: "history",
+  dashboard: "dashboard",
+  transactions: "transactions",
 };
 
 /** Розділ, який показується, коли в пам'яті нічого немає. */
-export const DEFAULT_APP_VIEW = APP_VIEWS.entry;
+export const DEFAULT_APP_VIEW = APP_VIEWS.dashboard;

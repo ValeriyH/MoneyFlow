@@ -55,8 +55,15 @@ const historyPanelElement = findById("historyPanel");
 const overviewPanel = initOverviewPanel();
 const budgetPanel = initBudgetPanel();
 const syncIndicator = initSyncIndicator({ store: budgetStore, onManualSync: requestSync });
-const transactionList = initTransactionList({ onDeleteRequest: confirmAndRemoveTransaction });
-const entryForm = initEntryForm({ store: budgetStore, onSubmit: submitTransactionEntry });
+const transactionList = initTransactionList({
+  onDeleteRequest: confirmAndRemoveTransaction,
+  onEditRequest: (transaction) => entryForm.loadForEdit(transaction),
+});
+const entryForm = initEntryForm({
+  store: budgetStore,
+  onSubmit: submitTransactionEntry,
+  onUpdateSubmit: updateTransactionEntry,
+});
 const profileChip = initProfileChip({ onSwitchUser: confirmUserSwitch });
 
 initCollapsibleCards();
@@ -412,6 +419,28 @@ async function confirmAndRemoveTransaction(transaction) {
   }
 
   showToast(error?.message ?? "Видалення в черзі — повторимо за мережі", "warning");
+}
+
+/**
+ * Переписує наявну операцію.
+ *
+ * `changes` не містить `id` і `user`: перший сервер шукає сам за
+ * номером рядка, а «Хто» він і так бере зі свого токена.
+ *
+ * @param {string} transactionId
+ * @param {{ amount: number, category: string, occurredOn: string, note: string }} changes
+ * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+ */
+async function updateTransactionEntry(transactionId, changes) {
+  const { deliveredImmediately, error } = await budgetStore.updateTransaction(transactionId, changes);
+
+  if (deliveredImmediately) {
+    showToast("Зміни збережено", "success");
+    return { deliveredImmediately, error };
+  }
+
+  showToast(error?.message ?? "Правка в черзі — повторимо за мережі", "warning");
+  return { deliveredImmediately, error };
 }
 
 /**

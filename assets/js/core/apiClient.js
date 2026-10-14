@@ -210,3 +210,20 @@ export function submitTransaction(sessionToken, transactionPayload, periods, lim
 export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
   return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
 }
+
+/**
+ * Переписує наявну операцію на місці.
+ *
+ * `transaction` мусить містити `id` — за ним сервер знаходить рядок.
+ * «Хто» і «Записано» сервер бере зі своїх даних, а не з цього
+ * payload: підробити автора зміни неможливо, а час останнього
+ * запису про рядок сервер проставляє сам.
+ *
+ * @param {string} sessionToken
+ * @param {object} transactionPayload
+ * @param {Array<string>} periods
+ * @param {string} limitPeriod
+ */
+export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
+  return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
+}
