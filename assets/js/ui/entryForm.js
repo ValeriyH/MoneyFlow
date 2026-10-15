@@ -15,7 +15,7 @@
  */
 
 import { evaluateAmountExpression, canAppendOperator } from "../domain/amountExpression.js";
-import { filterActiveCategories } from "../domain/budget.js";
+import { isCategoryActive } from "../domain/budget.js";
 import { formatCurrency } from "../domain/formatters.js";
 import { todayAsIsoDate } from "../domain/period.js";
 import { clearChildren, createElement, findById, on, setVisibility, setStatusMessage } from "./dom.js";
@@ -41,6 +41,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   const categoryChipsElement = findById("categoryChips");
   const categoryErrorElement = findById("entryCategoryError");
   const categoryEmptyElement = findById("categoryChipsEmpty");
+  const categoryToggleElement = findById("categoryToggleButton");
 
   const dateInputElement = findById("entryDateInput");
   const noteInputElement = findById("entryNoteInput");
@@ -57,6 +58,14 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     selectedCategoryName: null,
     /** id операції, яку зараз правимо; null — це новий запис. */
     editingTransactionId: null,
+    /**
+     * Показувати неактивні категорії.
+     *
+     * Живе лише до перезавантаження: потреба рідка (внести витрату
+     * за минулий місяць, де категорію уже вимкнули), тож запам'ятовувати
+     * такий стан означало б назавжди залишити в формі всі категорії.
+     */
+    showAllCategories: false,
   };
 
   /** Чи є взагалі що запропонувати вибрати. */
@@ -73,6 +82,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   initAmountEditor();
   initCompactMode();
   initEditMode();
+  initCategoryToggle();
 
   // Стартовий стан: поле порожнє, тож кнопка має бути сіра вже
   // до першого натискання, а не після нього.
@@ -89,6 +99,21 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
    */
   function initEditMode() {
     on(cancelEditButtonElement, "click", cancelEdit);
+  }
+
+  /**
+   * Розкриває неактивні категорії — і навпаки.
+   *
+   * Стан лишається тільки до перезавантаження сторінки: раз на
+   * кілька місяців хтось вносить витрату за минулий тиждень, і
+   * запам'ятовувати такий перемикач означало б назавжди залишити
+   * в формі весь каталог.
+   */
+  function initCategoryToggle() {
+    on(categoryToggleElement, "click", () => {
+      formState.showAllCategories = !formState.showAllCategories;
+      renderCategoryChips(store.getState().categories);
+    });
   }
 
   /**
@@ -279,6 +304,55 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
+   * Які категорії бачить форма.
+   *
+   * Типово — лише активні: неактивних у з часом набирається, і вони
+   * лише засмічують форму. Але дві речі змушують їх показувати:
+   *
+   *   категорія запису, який правиться, — обов'язково. Інакше форма
+   *     мовчки показала б порожній вибір під час запису, який цілком
+   *     видимий у списку: збереглося б старе значення, а людина не
+   *     бачила б, що саме вона змінює;
+   *
+   *   кнопка «показати всі» — коли людина вносить витрату за минулий
+   *     місяць, де потрібну категорію вже вимкнули.
+   *
+   * Список **не залежить від місяця**: якщо неактивна категорія
+   * трапляється в записах цього місяця, вона не піднімається до
+   * «тимчасово активних». Інакше список мигав би при перемиканні
+   * місяців, а людина не мала б змоги сказати, які категорії вона
+   * зараз бачить.
+   *
+   * @param {Array<object>} categories
+   * @returns {Array<object>}
+   */
+  function visibleCategories(categories) {
+    return categories.filter(
+      (category) =>
+        isCategoryActive(category) ||
+        formState.showAllCategories ||
+        category.name === formState.selectedCategoryName,
+    );
+  }
+
+  /**
+   * Кнопка з'являється лише тоді, коли є що розкривати.
+   *
+   * @param {number} inactiveCount
+   */
+  function renderCategoryToggle(inactiveCount) {
+    if (inactiveCount === 0) {
+      setVisibility(categoryToggleElement, false);
+      return;
+    }
+
+    setVisibility(categoryToggleElement, true);
+    categoryToggleElement.textContent = formState.showAllCategories
+      ? "Показати лише активні"
+      : `Показати всі категорії (${inactiveCount})`;
+  }
+
+  /**
    * @param {Readonly<object>} state
    */
   function render(state) {
@@ -301,22 +375,36 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
    * @param {Array<object>} categories
    */
   function renderCategoryChips(categories) {
-    const categoriesToRender = filterActiveCategories(categories);
+    const categoriesToRender = visibleCategories(categories);
+    const inactiveCount = categories.filter((category) => !isCategoryActive(category)).length;
 
     clearChildren(categoryChipsElement);
 
-    // Без активних категорій зберегти витрату неможливо, тож і кнопка
+    // Без жодної категорії зберегти витрату неможливо, тож і кнопка
     // не потрібна — інакше вона вела б у помилку валідації.
     const hasCategories = categoriesToRender.length > 0;
     hasActiveCategories = hasCategories;
     refreshSubmitAvailability();
     setVisibility(categoryEmptyElement, !hasCategories);
 
+    renderCategoryToggle(inactiveCount);
+
     for (const category of categoriesToRender) {
+      const isCategorySelectable = isCategoryActive(category);
+
       const categoryChipElement = createElement("button", {
         className: "chip",
         attributes: { type: "button", role: "radio", "aria-checked": "false" },
       });
+
+      // Неактивна категорія лишається доступною — просто її видно
+      // інакше. Помітка потрібна, щоб не виглядало заблокованим:
+      // сірий текст означав би «не можна натиснути», а натиснути
+      // можна, хоча це рідко потрібно - випадок реальний.
+      if (!isCategorySelectable) {
+        categoryChipElement.classList.add("chip--inactive");
+        categoryChipElement.title = "Неактивна категорія — її вже не пропонують, але можна вибрати";
+      }
 
       const categoryIconElement = createElement("span", {
         className: "chip__icon",

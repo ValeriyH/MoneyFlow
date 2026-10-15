@@ -447,6 +447,44 @@ select.field__input {
   border-color: var(--color-border-strong);
 }
 
+/* Неактивна катег��рія лишається доступною, тож її не можна робити
+   схожою на заблоковану: сірий текст і прибраний курсор читались
+   б як «натиснути не можна». Тому помітка — рамка й тло, а текст
+   лишається контрастним. */
+.chip--inactive {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+}
+
+.chip--inactive .chip__icon {
+  opacity: 0.55;
+}
+
+.chip--inactive:hover {
+  background: var(--color-surface);
+}
+
+.chip--inactive.is-selected {
+  background: var(--color-surface-muted);
+}
+
+/* ── Перемикач «показати всі категорії» ──────────────────────────────────── */
+
+.category-toggle {
+  margin-top: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-accent-strong);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.category-toggle:hover { color: var(--color-text-primary); }
+
 .chip.is-selected {
   font-weight: 600;
   background: var(--color-accent-soft);
