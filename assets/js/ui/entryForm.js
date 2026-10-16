@@ -28,6 +28,36 @@ const RECENT_ENTRY_MIN_VISIBLE_MS = 15_000;
 /** Більше трьох рядків у смузі некорисні: далі — це вже історія. */
 const MAX_RECENT_ENTRIES = 3;
 
+/** Форматує дату й час як ISO-рядок (напр. "2026-10-16T14:30" або лише дату). */
+function selectDateTime(datePart, timePart) {
+  if (!timePart) return datePart;
+  return `${datePart}T${timePart}`;
+}
+
+/** Форматує час у форматі HH:mm (24-годинний), ігноруючи налаштування браузера. */
+function formatTimeExplicit(date) {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+/** Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30" → "14:30"). */
+/**
+ * Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30") і повертає рядок "ГГ:ММ".
+ * Використовує Date для надійності, а не текстовий парсинг.
+ */
+function parseTimeFromOccurred(occurredOn) {
+  if (!occurredOn) return '';
+  try {
+    // Створюємо об'єкт Date з ISO-рядка та отримуємо час у форматі "ГГ:ММ".
+    const date = new Date(occurredOn);
+    if (isNaN(date)) return ''; // Помилковий рядок не дасть валідного об'єкта
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  } catch (e) {
+    return '';
+  }
+}
+
 export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, onEditCancel }) {
   const formElement = findById("entryForm");
   const detailsElement = findById("entryDetails");
@@ -44,7 +74,11 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   const categoryToggleElement = findById("categoryToggleButton");
 
   const dateInputElement = findById("entryDateInput");
+  const timeInputElement = findById("entryTimeInput");
   const noteInputElement = findById("entryNoteInput");
+
+  // Додаємо елемент для помилок часу.
+  const entryTimeErrorElement = findById("entryTimeError");
 
   const submitButtonElement = findById("entrySubmitButton");
   const statusElement = findById("entryStatus");
@@ -89,6 +123,9 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   refreshAmountPreview();
 
   on(formElement, "submit", handleSubmit);
+  
+  // Ініціалізація форми з коректним поточним часом.
+  resetFormFields();
 
   /* ── Редагування наявної операції ────────────────────────────────────── */
 
@@ -130,7 +167,11 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     formState.selectedCategoryName = transaction.category;
 
     amountInputElement.value = String(transaction.amount ?? "");
-    dateInputElement.value = transaction.occurredOn ?? todayAsIsoDate();
+    const datePart = new Date().toISOString().split('T')[0];
+    const occurredOn = transaction.occurredOn ?? datePart;
+
+    dateInputElement.value = occurredOn.split('T')[0] ?? occurredOn;
+    timeInputElement.value = parseTimeFromOccurred(occurredOn) || formatTimeExplicit(new Date()); // Якщо часу немає — ставимо поточний
     noteInputElement.value = transaction.note ?? "";
 
     submitButtonElement.textContent = "Зберегти зміни";
@@ -505,12 +546,19 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     }
     clearFieldError(categoryChipsElement, categoryErrorElement);
 
+    const selectedTime = timeInputElement.value || undefined; // Для існуючих записі час може бути відсутнім
+
+    // Валідація формату часу: HH:MM (24-годинний)
+    // При зміні типу поля на "type=time", браузер відповідає за валідацію. 
+    // Наша перевірка тут не потрібна, але ми повинні скинути помилку у разі успішної корекції.
+    clearFieldError(timeInputElement, entryTimeErrorElement);
+
     return {
       isValid: true,
       draft: {
         amount: parsedExpression.value,
         category: selectedCategory,
-        occurredOn: dateInputElement.value || todayAsIsoDate(),
+        occurredOn: selectDateTime(dateInputElement.value, selectedTime),
         note: noteInputElement.value.trim(),
       },
     };
@@ -575,8 +623,11 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   function resetFormFields() {
     amountInputElement.value = '';
+
+    dateInputElement.value = new Date().toISOString().split('T')[0];
+    // Встановлюємо час на поточний момент при очищенні форми
+    timeInputElement.value = formatTimeExplicit(new Date());
     noteInputElement.value = '';
-    dateInputElement.value = todayAsIsoDate();
     formState.selectedCategoryName = null;
     refreshAmountPreview();
     syncFormState();

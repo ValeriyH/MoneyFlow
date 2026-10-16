@@ -20,7 +20,7 @@ export function findById(elementId) {
 /**
  * Створює елемент із вказаними класом, атрибутами та вмістом.
  * @param {string} tagName
- * @param {{ className?: string, textContent?: string, dataset?: Record<string, string>, attributes?: Record<string, string> }} options
+ * @param {{ className?: string, textContent?: string, dataset?: Record<string, string>, attributes?: Record<string, string>, children?: Array<Node> }} [options]
  * @returns {HTMLElement}
  */
 export function createElement(tagName, options = {}) {
@@ -28,6 +28,10 @@ export function createElement(tagName, options = {}) {
 
   if (options.className) element.className = options.className;
   if (options.textContent !== undefined) element.textContent = options.textContent;
+
+  if (options.children) {
+    element.append(...options.children);
+  }
 
   if (options.dataset) {
     for (const [key, value] of Object.entries(options.dataset)) {

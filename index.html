@@ -157,7 +157,7 @@
             <legend class="field__label">Категорія</legend>
             <div class="chip-grid" id="categoryChips" role="radiogroup" aria-label="Категорія"></div>
 
-            <button class="category-toggle" id="categoryToggleButton" type="button" hidden></button>
+            <button class="expand-link" id="categoryToggleButton" type="button" hidden></button>
 
             <p class="card__empty" id="categoryChipsEmpty" hidden>
               Активних категорій немає. Заповніть аркуш <code>Categories</code>
@@ -166,10 +166,20 @@
             <p class="field__error" id="entryCategoryError" hidden></p>
           </fieldset>
 
-          <label class="field">
-            <span class="field__label">Дата</span>
-            <input class="field__input" type="date" id="entryDateInput" required>
-          </label>
+          <div class="field-row">
+            <label class="field">
+              <span class="field__label">Дата</span>
+              <input class="field__input" type="date" id="entryDateInput" required>
+            </label>
+
+            <label class="field">
+              <span class="field__label">Час <em class="field__optional">необов'язково</em></span>
+              <input class="field__input" type="time" id="entryTimeInput"
+                     placeholder="ГГ:ММ" autocomplete="off">
+            </label>
+
+            <p class="field__error" id="entryTimeError" hidden></p>
+          </div>
 
           <label class="field">
             <span class="field__label">Нотатка <em class="field__optional">необов'язково</em></span>

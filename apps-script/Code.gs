@@ -26,6 +26,14 @@ const SHEET_CATEGORIES = 'Categories';
 const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
 
+/**
+ * Часовий пояс для всіх дат і часів.
+ *
+ * Один рядок замість трьох літералів: зміниться зона — зміниться
+ * в одному місці, а не трьох, і одні виправляться, а два ні.
+ */
+const TIMEZONE = 'Europe/Kyiv';
+
 const HEADER_ID = 'ID';
 const HEADER_DATE = 'Дата';
 const HEADER_CATEGORY = 'Категорія';
@@ -758,7 +766,7 @@ function readTransactions(periods) {
 
   sliceValues.forEach(function (dataRow) {
     const record = mapRowToRecord(dataRow, columnIndexByName);
-    const occurredOn = toIsoDate(record[HEADER_DATE]);
+    const occurredOn = toIsoDateTime(record[HEADER_DATE]);
 
     // Чужий місяць просто ігноруємо — він у смузі опинився
     // через запас на записи, додані заднім числом.
@@ -840,7 +848,7 @@ function appendTransaction(payload, viewer) {
   }
 
   const amount = toPositiveNumber(payload.amount);
-  const occurredOn = toIsoDate(payload.occurredOn);
+  const occurredOn = toIsoDateTime(payload.occurredOn);
 
   if (!amount) {
     throw new RequestError('Сума має бути додатним числом', 'BAD_REQUEST');
@@ -976,7 +984,7 @@ function updateTransaction(payload, viewer) {
   }
 
   const amount = toPositiveNumber(payload.amount);
-  const occurredOn = toIsoDate(payload.occurredOn);
+  const occurredOn = toIsoDateTime(payload.occurredOn);
 
   if (!amount) {
     throw new RequestError('Сума має бути додатним числом', 'BAD_REQUEST');
@@ -1252,7 +1260,7 @@ function toPositiveNumber(rawValue) {
  */
 function toPeriodKey(rawValue) {
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
-    return Utilities.formatDate(rawValue, 'Europe/Kyiv', 'yyyy-MM');
+    return Utilities.formatDate(rawValue, TIMEZONE, 'yyyy-MM');
   }
 
   const textValue = String(rawValue === undefined || rawValue === null ? '' : rawValue).trim();
@@ -1266,13 +1274,40 @@ function toPeriodKey(rawValue) {
 }
 
 /**
+ * Приймає «2026-10-05», «2026-10-05T14:30», дату з таблиці або
+ * ISO-рядок — і повертає той самий вигляд.
+ *
+ * Час не вигадується: якщо його немає, результат лишається без
+ * часу. Запис, внесений тиждень тому без часу, інакше показував би
+ * час того тижня, коли його читали, — і виглядав би щойно доданим.
+ *
+ * @param {unknown} rawValue
+ * @returns {string} «2026-10-05T14:30», «2026-10-05» або порожній рядок
+ */
+function toIsoDateTime(rawValue) {
+  // Об'єкт Date зустрічається лише в клітинках, куди хтось вписав
+  // дату руками: Sheets розпізнав її як справжню дату, а не текст.
+  if (Object.prototype.toString.call(rawValue) === '[object Date]') {
+    return Utilities.formatDate(rawValue, TIMEZONE, "yyyy-MM-dd'T'HH:mm");
+  }
+
+  const datePart = toIsoDate(rawValue);
+  if (!datePart) return '';
+
+  const timeMatch = String(rawValue || '').trim()
+    .match(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+
+  return timeMatch ? datePart + 'T' + timeMatch[1] + ':' + timeMatch[2] : datePart;
+}
+
+/**
  * Приймає «2026-10-05», дату з таблиці або ISO-рядок.
  * @param {unknown} rawValue
  * @returns {string} «2026-10-05» або порожній рядок
  */
 function toIsoDate(rawValue) {
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
-    return Utilities.formatDate(rawValue, 'Europe/Kyiv', 'yyyy-MM-dd');
+    return Utilities.formatDate(rawValue, TIMEZONE, 'yyyy-MM-dd');
   }
 
   const textValue = String(rawValue || '').trim();
@@ -1284,7 +1319,7 @@ function toIsoDate(rawValue) {
   const parsedDate = new Date(textValue);
   if (isNaN(parsedDate.getTime())) return '';
 
-  return Utilities.formatDate(parsedDate, 'Europe/Kyiv', 'yyyy-MM-dd');
+  return Utilities.formatDate(parsedDate, TIMEZONE, 'yyyy-MM-dd');
 }
 
 /**

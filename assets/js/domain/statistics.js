@@ -135,8 +135,16 @@ export function buildCategoryBreakdown(expenseTransactions, categories, expenseT
 }
 
 /**
- * Останні операції для списку історії: новіші спершу,
- * обрізані до `pageSize`.
+ * Операції для списку: за датою витрати, новіші спершу.
+ *
+ * Головний ключ — `occurredOn`, а не час внесення: витрати
+ * мають групуватися по днях, інакше «що я витратив вчора»
+ * розсипається між тим, що внесено сьогодні за вчора, і тим,
+ * що внесено вчора за вчора.
+ *
+ * `recordedAt` лишається запасним: він розводить записи, внесені
+ * протягом хвилини, і дає порядок для старих рядків без часу,
+ * де дата зовсім однакова.
  *
  * @param {Array<object>} transactions
  * @param {number} pageSize
@@ -144,9 +152,31 @@ export function buildCategoryBreakdown(expenseTransactions, categories, expenseT
  */
 export function takeRecentTransactions(transactions, pageSize) {
   return [...transactions]
-    .sort((left, right) =>
-      (right.recordedAt ?? "").localeCompare(left.recordedAt ?? "") ||
-      (right.occurredOn ?? "").localeCompare(left.occurredOn ?? ""),
+    .sort(
+      (left, right) =>
+        expenseTimeKey(right).localeCompare(expenseTimeKey(left)) ||
+        (right.recordedAt ?? "").localeCompare(left.recordedAt ?? ""),
     )
     .slice(0, pageSize);
+}
+
+/**
+ * Ключ сортування за датою витрати, з нормалізованим часом.
+ *
+ * Час доповнюється не просто так: «2026-10-16» коротший за
+ * «2026-10-16T08:00», тож без доповнення записи одного дня
+ * розсипалися б — спершу ті, що з часом, потім ті, що без.
+ * `T00:00` ставить усіх на одне місце, і день лишається цілим.
+ *
+ * Порожня дата лишається порожньою, а не перетворюється на
+ * `T00:00`: запис без дати мусить опинятися в кінці, а не
+ * на початку.
+ *
+ * @param {object} transaction
+ * @returns {string}
+ */
+function expenseTimeKey(transaction) {
+  const occurredOn = transaction?.occurredOn ?? "";
+  if (!occurredOn) return "";
+  return occurredOn.includes("T") ? occurredOn : `${occurredOn}T00:00`;
 }

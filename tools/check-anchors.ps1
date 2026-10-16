@@ -20,16 +20,16 @@ function Get-Anchors([string]$path) {
 
 $root = "$PSScriptRoot\.."
 $readmeAnchors = Get-Anchors "$root\README.md"
-$agentAnchors  = Get-Anchors "$root\AGENT.md"
+$agentAnchors  = Get-Anchors "$root\AGENTS.md"
 
 $files = @{
   'README.md' = $readmeAnchors
-  'AGENT.md'  = $agentAnchors
+  'AGENTS.md' = $agentAnchors
 }
 
 $problems = 0
 
-foreach ($file in @('README.md', 'AGENT.md')) {
+foreach ($file in @('README.md', 'AGENTS.md')) {
   Write-Output ("=== " + $file + " ===")
 
   $full = Join-Path $root $file

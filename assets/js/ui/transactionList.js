@@ -4,7 +4,7 @@
  */
 
 import { HISTORY_PAGE_SIZE } from "../config.js";
-import { formatCurrency, formatFullDate } from "../domain/formatters.js";
+import { formatClockTime, formatCurrency, formatShortDate } from "../domain/formatters.js";
 import { filterTransactionsByPeriod, takeRecentTransactions } from "../domain/statistics.js";
 import { clearChildren, createElement, findById, on, setVisibility } from "./dom.js";
 
@@ -19,6 +19,7 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   const countBadgeElement = findById("historyCountBadge");
 
   const categoryMetaByName = new Map();
+  let isExpanded = false;
 
   /**
    * @param {Readonly<object>} state
@@ -36,23 +37,38 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
       ? `${periodTransactions.length} операцій`
       : "—";
 
-    const recentTransactions = takeRecentTransactions(periodTransactions, HISTORY_PAGE_SIZE);
-    const hasHiddenRows = periodTransactions.length > recentTransactions.length;
+    let transactionsToRender;
+    if (isExpanded) {
+      transactionsToRender = periodTransactions;
+    } else {
+      transactionsToRender = takeRecentTransactions(periodTransactions, HISTORY_PAGE_SIZE);
+    }
 
-    setVisibility(emptyMessageElement, recentTransactions.length === 0);
+    const hasHiddenRows = periodTransactions.length > HISTORY_PAGE_SIZE;
+
+    setVisibility(emptyMessageElement, transactionsToRender.length === 0);
     clearChildren(listElement);
 
-    for (const transaction of recentTransactions) {
+    for (const transaction of transactionsToRender) {
       listElement.append(createTransactionItem(transaction));
     }
 
     if (hasHiddenRows) {
-      listElement.append(
-        createElement("li", {
-          className: "card__empty",
-          textContent: `…і ще ${periodTransactions.length - recentTransactions.length} операцій цього місяця`,
-        }),
-      );
+      const hiddenCount = periodTransactions.length - HISTORY_PAGE_SIZE;
+      const expandButton = createElement("button", {
+        className: "expand-link",
+        textContent: isExpanded ? "Сховати" : `Показати всі транзакції (${hiddenCount})`,
+        attributes: { type: "button" },
+      });
+
+      on(expandButton, "click", () => {
+        isExpanded = !isExpanded;
+        render(state, periodKey);
+      });
+
+      // Кнопка — елемент списку, тож обгортаємо в <li>: інакше в <ul>
+      // лежить кнопка, а це некоректна розмітка.
+      listElement.append(createElement("li", { className: "transaction-list__more" }, undefined, [expandButton]));
     }
   }
 
@@ -80,6 +96,21 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
         className: "transaction__title",
         textContent: transaction.category,
       }),
+    );
+
+    // Комент — окремим рядком. Поруч із датою й категорією він
+    // уміщався на два-три слова, а на телефоні це був рядок
+    // без змісту: видно було тільки початок.
+    if (transaction.note) {
+      bodyElement.append(
+        createElement("span", {
+          className: "transaction__note",
+          textContent: transaction.note,
+        }),
+      );
+    }
+
+    bodyElement.append(
       createElement("span", {
         className: "transaction__meta",
         textContent: buildMetaLine(transaction),
@@ -116,12 +147,19 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   }
 
   /**
+   * Третій рядок: коли витрата й хто її вніс.
+   *
    * @param {object} transaction
    * @returns {string}
    */
   function buildMetaLine(transaction) {
-    const noteSuffix = transaction.note ? ` · ${transaction.note}` : "";
-    return `${formatFullDate(transaction.occurredOn)} · ${transaction.user || "—"}${noteSuffix}`;
+    const clockTime = formatClockTime(transaction.occurredOn);
+    const datePart = formatShortDate(transaction.occurredOn);
+    // Час показуємо лише тоді, коли він реально є: у старих записах
+    // його немає, і порожній рядок виглядав би як недолік формату.
+    const whenPart = clockTime ? `${datePart}, ${clockTime}` : datePart;
+
+    return `${whenPart} · ${transaction.user || "—"}`;
   }
 
   return { render };

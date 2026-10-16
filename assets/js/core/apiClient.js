@@ -75,7 +75,11 @@ async function sendCommand({ action, sessionToken, ...payload }) {
       // text/plain обязателен: з application/json Apps Script відповідає
       // CORS-редиректом, який браузер блокує.
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, sessionToken: sessionToken ?? "", ...payload }),
+      body: JSON.stringify({
+        action,
+        sessionToken: sessionToken ?? "",
+        ...payload,
+      }),
       signal: abortController.signal,
     });
 

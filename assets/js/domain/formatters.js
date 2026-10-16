@@ -96,18 +96,36 @@ export function formatPeriodTitle(periodKey) {
  * @returns {Date | null}
  */
 export function parseIsoDate(isoDateValue) {
-  const parsedDate = new Date(`${isoDateValue}T00:00:00`);
+  // Беремо лише дату. Запис може прийти з часом —
+  // «2026-10-15T09:15» — і дописування власного часу до такого
+  // рядка дало б нерозбірливий.
+  const datePart = String(isoDateValue ?? '').slice(0, 10);
+  const parsedDate = new Date(`${datePart}T00:00:00`);
   return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
 }
 
 /**
- * @param {string} dateValue — «2026-10-05»
- * @returns {string} наприклад «5 жовт. 2026»
+ * Час із рядка операції.
+ * @param {string} dateTimeValue — «2026-10-15» або «2026-10-15T09:15»
+ * @returns {string} «09:15» або порожній рядок, коли часу немає
  */
-export function formatFullDate(dateValue) {
+export function formatClockTime(dateTimeValue) {
+  const timeMatch = String(dateTimeValue ?? '').match(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+  return timeMatch ? `${timeMatch[1]}:${timeMatch[2]}` : '';
+}
+
+/**
+ * Дата без року: список показує один місяць, а рік уже стоїть
+ * у виборі місяця над ним. У рядку таблиці повторювати його —
+ * це найдорожче місце на вузькому екрані.
+ *
+ * @param {string} dateValue — «2026-10-05»
+ * @returns {string} наприклад «5 жовт.»
+ */
+export function formatShortDate(dateValue) {
   const parsedDate = parseIsoDate(dateValue);
   if (!parsedDate) return dateValue;
-  return `${shortDateFormatter.format(parsedDate)} ${parsedDate.getFullYear()}`;
+  return shortDateFormatter.format(parsedDate);
 }
 
 /**

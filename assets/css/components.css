@@ -471,7 +471,7 @@ select.field__input {
 
 /* ── Перемикач «показати всі категорії» ──────────────────────────────────── */
 
-.category-toggle {
+.expand-link {
   margin-top: var(--space-2);
   padding: var(--space-1) 0;
   font-size: 13px;
@@ -483,7 +483,9 @@ select.field__input {
   text-underline-offset: 3px;
 }
 
-.category-toggle:hover { color: var(--color-text-primary); }
+.expand-link:hover { color: var(--color-text-primary); }
+
+
 
 .chip.is-selected {
   font-weight: 600;
@@ -1035,6 +1037,7 @@ select.field__input {
 }
 
 .transaction__title,
+.transaction__note,
 .transaction__meta {
   display: block;
 }
@@ -1042,6 +1045,17 @@ select.field__input {
 .transaction__title {
   font-size: 14px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Комент стоїть між категорією та датою. Колір — між ними: не
+   такий блідний, як дата, але й не такий важкий, як категорія,
+   щоб око йшло по рядку зверху вниз. */
+.transaction__note {
+  font-size: 12px;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
