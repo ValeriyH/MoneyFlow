@@ -37,12 +37,14 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
       ? `${periodTransactions.length} операцій`
       : "—";
 
-    let transactionsToRender;
-    if (isExpanded) {
-      transactionsToRender = periodTransactions;
-    } else {
-      transactionsToRender = takeRecentTransactions(periodTransactions, HISTORY_PAGE_SIZE);
-    }
+    // Сортування — завжди, у двох станах. Інакше розгорнутий список
+    // показував би записи в порядку таблиці: сервер їх не
+    // впорядковує, а `takeRecentTransactions` єдине місце, де
+    // визначено порядок.
+    const transactionsToRender = takeRecentTransactions(
+      periodTransactions,
+      isExpanded ? periodTransactions.length : HISTORY_PAGE_SIZE,
+    );
 
     const hasHiddenRows = periodTransactions.length > HISTORY_PAGE_SIZE;
 
@@ -68,7 +70,7 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
 
       // Кнопка — елемент списку, тож обгортаємо в <li>: інакше в <ul>
       // лежить кнопка, а це некоректна розмітка.
-      listElement.append(createElement("li", { className: "transaction-list__more" }, undefined, [expandButton]));
+      listElement.append(createElement("li", { className: "transaction-list__more", children: [expandButton] }));
     }
   }
 

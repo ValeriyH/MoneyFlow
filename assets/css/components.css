@@ -1007,6 +1007,14 @@ select.field__input {
   flex-direction: column;
 }
 
+/* Кнопка «показати всі» — по центру списку. `.expand-link` спільний
+   із перемикачем категорій у формі, де він лишається ліворуч,
+   тому центруємо лише тут. */
+.transaction-list__more {
+  display: flex;
+  justify-content: center;
+}
+
 .transaction {
   display: flex;
   align-items: center;
