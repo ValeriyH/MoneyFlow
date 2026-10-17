@@ -12,6 +12,7 @@ import { clearChildren, createElement, findById, on, setVisibility } from "./dom
  * @param {object} dependencies
  * @param {(transaction: object) => void} dependencies.onDeleteRequest
  * @param {(transaction: object) => void} dependencies.onEditRequest
+ * @returns {{ render: (state: Readonly<object>, periodKey: string) => void }}
  */
 export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   const listElement = findById("transactionList");

@@ -34,7 +34,6 @@ function selectDateTime(datePart, timePart) {
   return `${datePart}T${timePart}`;
 }
 
-/** Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30" → "14:30"). */
 /**
  * Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30") і повертає рядок "ГГ:ММ".
  * Використовує Date для надійності, а не текстовий парсинг.
@@ -51,6 +50,19 @@ function parseTimeFromOccurred(occurredOn) {
   }
 }
 
+/**
+ * @param {object} dependencies
+ * @param {import('../core/budgetStore.js').budgetStore} dependencies.store
+ * @param {(draft: object) => Promise<void>} dependencies.onSubmit
+ * @param {(draft: object) => Promise<void>} dependencies.onUpdateSubmit
+ * @param {(transaction: object) => void} dependencies.onEditRequest
+ * @param {() => void} [dependencies.onEditCancel]
+ * @returns {{
+ *   render: (state: Readonly<object>) => void,
+ *   loadForEdit: (transaction: object) => void,
+ *   cancelEdit: () => void,
+ * }}
+ */
 export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, onEditCancel }) {
   const formElement = findById("entryForm");
   const detailsElement = findById("entryDetails");

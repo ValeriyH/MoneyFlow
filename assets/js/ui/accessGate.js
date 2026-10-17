@@ -17,6 +17,7 @@ const COUNTDOWN_TICK_MS = 1000;
  * @param {object} dependencies
  * @param {(credentials: { login: string, password: string }) => Promise<void>} dependencies.onUnlock
  * @param {() => void} dependencies.onUnlockFailed
+ * @returns {{ render: () => void, revealAgain: () => void }}
  */
 export function initAccessGate({ onUnlock, onUnlockFailed }) {
   const gateElement = findById("accessGate");

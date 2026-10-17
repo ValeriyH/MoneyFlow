@@ -13,6 +13,7 @@ import { findById, on } from "./dom.js";
  * @param {object} dependencies
  * @param {import('../core/budgetStore.js').budgetStore} dependencies.store
  * @param {() => void} dependencies.onManualSync
+ * @returns {{ render: (state: Readonly<object>) => void }}
  */
 export function initSyncIndicator({ store, onManualSync }) {
   const syncIndicatorElement = findById("syncIndicator");

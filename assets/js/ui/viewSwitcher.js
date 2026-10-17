@@ -12,6 +12,7 @@ import { findById, on } from "./dom.js";
 
 const VALID_VIEW_NAMES = Object.values(APP_VIEWS);
 
+/** @returns {{ activateView: (viewName: string) => void }} */
 export function initViewSwitcher() {
   const appMainElement = findById("appMain");
   const viewTabsElement = findById("viewTabs");

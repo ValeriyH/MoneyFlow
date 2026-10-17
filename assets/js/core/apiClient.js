@@ -27,7 +27,51 @@ export const API_ERROR_CODE = {
 };
 
 /**
- * Коди, за якими треба показати екран входу.
+ * @typedef {object} Viewer
+ * @property {string} name
+ * @property {string} color
+ */
+
+/**
+ * Категорія разом із лімітом на місяць запиту.
+ *
+ * @typedef {object} BudgetCategory
+ * @property {string} name
+ * @property {string} icon
+ * @property {string} color
+ * @property {string} isActive — «Так», «Ні» або порожньо (порожньо = так)
+ * @property {number} order
+ * @property {number} limit — ліміт на `limitPeriod`, 0 коли не задано
+ */
+
+/**
+ * Одна операція. `pending` немає в знімку — це клієнтська копія,
+ * ще в черзі відправлення.
+ *
+ * @typedef {object} Transaction
+ * @property {string} id
+ * @property {string} occurredOn — «2026-10-17» або «2026-10-17T09:15»
+ * @property {string} category
+ * @property {number} amount
+ * @property {string} user
+ * @property {string} note
+ * @property {string} recordedAt — ISO з часом у UTC
+ * @property {boolean} [pending]
+ */
+
+/**
+ * Знімок бюджету. `periods` — ті місяці, які сервер реально
+ * прочитав: клієнт замінює ними свої, решту не чіпає.
+ *
+ * @typedef {object} BudgetSnapshot
+ * @property {string} serverTime
+ * @property {Viewer} viewer
+ * @property {Array<BudgetCategory>} categories
+ * @property {Array<string>} periods
+ * @property {Array<Transaction>} transactions
+ */
+
+/** Коди, за якими треба показати екран входу.
  *
  * SESSION_EXPIRED — тимчасово: ввійдете знову й черга дійде.
  * UNAUTHORIZED — назавжди або до дії адміністратора: повторний
@@ -62,8 +106,23 @@ export class ApiError extends Error {
  * Виконує запит до Apps Script із таймаутом і приведенням помилок
  * до єдиного типу ApiError.
  *
+ * **Повертає різні форми залежно від `action`**, тому одного типу
+ * тут не буде — нижче перелічені всі. Нащадки замість нього
+ * мають конкретний `@returns`.
+ *
+ * ```
+ * authenticate         → { ok, token, expiresAt, serverTime }
+ * requestRegistration  → { ok, login, isActive }
+ * loadSnapshot         → { ok, ...BudgetSnapshot }
+ * addTransaction       → { ok, transaction, snapshot }
+ * updateTransaction    → { ok, transaction, snapshot }
+ * deleteTransaction    → { ok, deletedId, snapshot }
+ * ```
+ *
+ * Помилка ніколи не повертається — вона кидається як `ApiError`.
+ *
  * @param {{ action: string, sessionToken?: string, [key: string]: unknown }} command
- * @returns {Promise<object>}
+ * @returns {Promise<object>} див. перелік форм вище
  */
 async function sendCommand({ action, sessionToken, ...payload }) {
   const abortController = new AbortController();
@@ -166,6 +225,8 @@ export function openSession({ login, proof, timestamp }) {
  *
  * @param {string} login
  * @param {string} passwordHash — SHA-256 пароля, порахований у браузері
+ * @returns {Promise<{ login: string, isActive: false }>} заявка створена,
+ * але акаунт ще не активний — його вмикає адміністратор у таблиці
  */
 export function requestUserRegistration(login, passwordHash) {
   return sendCommand({ action: "requestRegistration", login, passwordHash });
@@ -186,6 +247,8 @@ export function requestUserRegistration(login, passwordHash) {
  * @param {string} sessionToken
  * @param {Array<string>} periods
  * @param {string} limitPeriod
+ * @returns {Promise<BudgetSnapshot>} `periods` у відповіді — ті місяці,
+ * які сервер прочитав насправді
  */
 export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
   return sendCommand({ action: "loadSnapshot", sessionToken, periods, limitPeriod });
@@ -199,6 +262,9 @@ export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
  * @param {object} transactionPayload
  * @param {Array<string>} periods
  * @param {string} limitPeriod
+ * @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
+ * справжній запис із сервера (з його `id`) і оновлені дані — саме
+ * за ними запис прибирається з черги, а не за `id` черги
  */
 export function submitTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
@@ -210,6 +276,7 @@ export function submitTransaction(sessionToken, transactionPayload, periods, lim
  * @param {string} transactionId
  * @param {Array<string>} periods
  * @param {string} limitPeriod
+ * @returns {Promise<{ deletedId: string, snapshot: BudgetSnapshot }>}
  */
 export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
   return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
@@ -227,6 +294,8 @@ export function deleteTransaction(sessionToken, transactionId, periods, limitPer
  * @param {object} transactionPayload
  * @param {Array<string>} periods
  * @param {string} limitPeriod
+ * @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
+ * віддає те, що реально лишилося в рядку, а не ехо з payload
  */
 export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });

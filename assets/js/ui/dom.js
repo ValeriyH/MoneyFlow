@@ -52,6 +52,7 @@ export function createElement(tagName, options = {}) {
  * Показує або ховає елемент через атрибут `hidden`.
  * @param {HTMLElement} element
  * @param {boolean} isVisible
+ * @returns {void}
  */
 export function setVisibility(element, isVisible) {
   element.hidden = !isVisible;
@@ -60,6 +61,7 @@ export function setVisibility(element, isVisible) {
 /**
  * Прибирає всі нащадки контейнера перед повторним рендером списку.
  * @param {HTMLElement} container
+ * @returns {void}
  */
 export function clearChildren(container) {
   container.replaceChildren();
@@ -69,7 +71,8 @@ export function clearChildren(container) {
  * Записує текстовий стан у елемент із семантичним кольором (`data-tone`).
  * @param {HTMLElement} element
  * @param {string} message
- * @param {string} [tone] — success | error | warning | pending
+ * @param {string} [tone] - success | error | warning | pending
+ * @returns {void}
  */
 export function setStatusMessage(element, message, tone) {
   element.textContent = message;

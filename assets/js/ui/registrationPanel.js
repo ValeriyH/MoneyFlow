@@ -23,6 +23,7 @@ const PASSWORD_RULES = [
   { key: "digit", isMet: (value) => /\d/.test(value) },
 ];
 
+/** @returns {void} підписується на стан сам і нікого не повертає */
 export function initRegistrationPanel() {
   const loginFormElement = findById("accessGateForm");
   const registrationFormElement = findById("registrationForm");

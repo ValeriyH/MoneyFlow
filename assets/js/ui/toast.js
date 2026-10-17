@@ -16,6 +16,7 @@ function getToastHost() {
 /**
  * @param {string} message
  * @param {'success' | 'error' | 'warning' | 'neutral'} [tone]
+ * @returns {void}
  */
 export function showToast(message, tone = "neutral") {
   const toastElement = createElement("div", {

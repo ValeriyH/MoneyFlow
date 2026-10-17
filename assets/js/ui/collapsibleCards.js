@@ -15,6 +15,7 @@ function findHeaderButton(cardElement) {
   return cardElement.querySelector(".card__header--button");
 }
 
+/** @returns {void} підписується на стан сам і нікого не повертає */
 export function initCollapsibleCards() {
   const collapsibleCards = [...document.querySelectorAll(".card--collapsible")];
   const collapsedCardKeys = loadCollapsedCards();

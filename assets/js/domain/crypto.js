@@ -54,7 +54,10 @@ export function hashPassword(password) {
   return sha256Hex(password);
 }
 
-/** Чи доступне хешування на цій сторінні. */
+/**
+ * Чи доступне хешування на цій сторінні.
+ * @returns {boolean}
+ */
 export function isCryptoAvailable() {
   return typeof crypto !== "undefined" && typeof crypto.subtle?.digest === "function";
 }

@@ -13,6 +13,7 @@ function toInitial(userName) {
   return userName ? userName.trim().charAt(0).toUpperCase() : "—";
 }
 
+/** @returns {{ render: (state: Readonly<object>) => void }} */
 export function initProfileChip({ onSwitchUser }) {
   const profileChipElement = findById("profileChip");
   const profileAvatarElement = findById("profileAvatar");

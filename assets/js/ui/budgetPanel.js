@@ -8,6 +8,7 @@ import { formatCurrency, formatPercentage } from "../domain/formatters.js";
 import { BUDGET_STATUS, buildBudgetReport, summarizeBudgetReport } from "../domain/budget.js";
 import { clearChildren, createElement, findById, setVisibility } from "./dom.js";
 
+/** @returns {{ render: (state: Readonly<object>) => void }} */
 export function initBudgetPanel() {
   const budgetListElement = findById("budgetPanelList");
   const budgetEmptyMessageElement = findById("budgetEmptyMessage");

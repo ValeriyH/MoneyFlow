@@ -17,6 +17,7 @@ import { clearChildren, createElement, findById, setVisibility } from "./dom.js"
 /** Скільки категорій показувати в легенді — решта йде в «та ще N». */
 const LEGEND_CATEGORY_LIMIT = 6;
 
+/** @returns {{ render: (state: Readonly<object>) => void }} */
 export function initOverviewPanel() {
   const balanceValueElement = findById("balanceValue");
   const balanceMetaElement = findById("balanceMeta");

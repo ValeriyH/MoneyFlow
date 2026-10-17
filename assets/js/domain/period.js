@@ -66,6 +66,7 @@ export function remainingDaysInPeriod(periodKey, referenceDate = new Date()) {
  * чи показувати «прогноз на кінець місяця».
  * @param {string} periodKey
  * @param {Date} [referenceDate]
+ * @returns {boolean}
  */
 export function isCurrentPeriod(periodKey, referenceDate = new Date()) {
   return periodKey === currentPeriodKey(referenceDate);

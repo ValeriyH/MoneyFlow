@@ -138,11 +138,13 @@ export function loadSession() {
 /**
  * @param {string} sessionToken
  * @param {string} login
+ * @returns {void}
  */
 export function saveSession(sessionToken, login) {
   writeJsonValue(STORAGE_KEYS.session, { token: sessionToken, login });
 }
 
+/** @returns {void} */
 export function forgetSession() {
   removeValue(STORAGE_KEYS.session);
 }
@@ -163,7 +165,10 @@ export function loadClockOffset() {
   return typeof storedOffset === "number" && Number.isFinite(storedOffset) ? storedOffset : 0;
 }
 
-/** @param {number} offsetMs */
+/**
+ * @param {number} offsetMs
+ * @returns {void}
+ */
 export function saveClockOffset(offsetMs) {
   writeJsonValue(STORAGE_KEYS.clockOffset, offsetMs);
 }
@@ -201,12 +206,16 @@ export function loadPendingEntries(login) {
 /**
  * @param {string | null} login
  * @param {Array<object>} pendingEntries
+ * @returns {void}
  */
 export function savePendingEntries(login, pendingEntries) {
   return writeJsonValue(pendingEntriesKey(login), pendingEntries);
 }
 
-/** @param {string | null} login */
+/**
+ * @param {string | null} login
+ * @returns {boolean} чи є для цього логіна записи в черзі
+ */
 export function hasPendingEntries(login) {
   return loadPendingEntries(login).length > 0;
 }
@@ -219,6 +228,7 @@ export function hasPendingEntries(login) {
  * відкритті на телефоні.
  *
  * @param {string} viewName
+ * @returns {void}
  */
 export function saveActiveView(viewName) {
   writeJsonValue(STORAGE_KEYS.activeView, viewName);
@@ -237,7 +247,10 @@ export function loadCollapsedCards() {
   return new Set(Array.isArray(storedKeys) ? storedKeys : []);
 }
 
-/** @param {Set<string>} collapsedCardKeys */
+/**
+ * @param {Set<string>} collapsedCardKeys
+ * @returns {void}
+ */
 export function saveCollapsedCards(collapsedCardKeys) {
   writeJsonValue(STORAGE_KEYS.collapsedCards, [...collapsedCardKeys]);
 }
@@ -246,6 +259,7 @@ export function saveCollapsedCards(collapsedCardKeys) {
 
 /**
  * @param {string} periodKey — «2026-10»
+ * @returns {void}
  */
 export function saveActivePeriod(periodKey) {
   writeJsonValue(STORAGE_KEYS.activePeriod, periodKey);
@@ -273,11 +287,15 @@ export function loadCachedSnapshot() {
   return cachedSnapshot && Array.isArray(cachedSnapshot.transactions) ? cachedSnapshot : null;
 }
 
-/** @param {object} snapshot */
+/**
+ * @param {object} snapshot
+ * @returns {void}
+ */
 export function saveCachedSnapshot(snapshot) {
   writeSessionJsonValue(STORAGE_KEYS.cachedSnapshot, snapshot);
 }
 
+/** @returns {void} */
 export function clearCachedSnapshot() {
   removeSessionValue(STORAGE_KEYS.cachedSnapshot);
 }
