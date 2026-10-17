@@ -72,12 +72,30 @@ export function isCurrentPeriod(periodKey, referenceDate = new Date()) {
 }
 
 /**
+ * Локальний час у форматі, який приймають поля дати й часу:
+ * «2026-10-17T02:49». Дата — перші 10 символів, час — наступні 5.
+ *
+ * **Єдине місце у проєкті, де будується локальний час для екрана.**
+ * Причина, чому воно одне: `toISOString()` за контрактом завжди
+ * переводить в UTC — це не наш вибір, а поведінка методу. У Києві
+ * (UTC+3) о 00:30 він поверне вчорашню дату, і жодне
+ * перезавантаження її не виправить, бо кожне рахуватиме те саме.
+ * Тому беремо локальні поля об'єкта `Date`, а не конвертуємо.
+ *
+ * Секунди не потрібні: у колонці `Дата` лежить `РРРР-ММ-ДДГГ:ХХ`.
+ *
+ * Для міток, які нікуди не виводяться (`recordedAt`,
+ * `lastSyncedAt`), UTC лишається правильним — там важлива
+ * монотонність рядка, а не місцевий час.
+ *
  * @param {Date} [referenceDate]
- * @returns {string} сьогоднішня дата у форматі, який приймає `<input type="date">`
+ * @returns {string}
  */
-export function todayAsIsoDate(referenceDate = new Date()) {
+export function toLocalIso(referenceDate = new Date()) {
   const year = referenceDate.getFullYear();
   const month = String(referenceDate.getMonth() + 1).padStart(2, "0");
   const day = String(referenceDate.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const hours = String(referenceDate.getHours()).padStart(2, "0");
+  const minutes = String(referenceDate.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }

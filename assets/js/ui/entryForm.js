@@ -17,7 +17,7 @@
 import { evaluateAmountExpression, canAppendOperator } from "../domain/amountExpression.js";
 import { isCategoryActive } from "../domain/budget.js";
 import { formatCurrency } from "../domain/formatters.js";
-import { todayAsIsoDate } from "../domain/period.js";
+import { toLocalIso } from "../domain/period.js";
 import { clearChildren, createElement, findById, on, setVisibility, setStatusMessage } from "./dom.js";
 
 const MAX_SAFE_AMOUNT = 100_000_000;
@@ -32,13 +32,6 @@ const MAX_RECENT_ENTRIES = 3;
 function selectDateTime(datePart, timePart) {
   if (!timePart) return datePart;
   return `${datePart}T${timePart}`;
-}
-
-/** Форматує час у форматі HH:mm (24-годинний), ігноруючи налаштування браузера. */
-function formatTimeExplicit(date) {
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
 }
 
 /** Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30" → "14:30"). */
@@ -100,6 +93,14 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
      * такий стан означало б назавжди залишити в формі всі категорії.
      */
     showAllCategories: false,
+    /**
+     * Дата, яку ми підставили самі при очищенні форми.
+     *
+     * Потрібна, щоб відрізнити «користувач нічого не чіпав» від
+     * «користувач сам поставив вчорашню дату». Без неї оновлення
+     * при поверненні на вкладку перезаписало б ручний вибір.
+     */
+    autoFilledDate: null,
   };
 
   /** Чи є взагалі що запропонувати вибрати. */
@@ -117,6 +118,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   initCompactMode();
   initEditMode();
   initCategoryToggle();
+  initDateTimeRefresh();
 
   // Стартовий стан: поле порожнє, тож кнопка має бути сіра вже
   // до першого натискання, а не після нього.
@@ -167,11 +169,10 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     formState.selectedCategoryName = transaction.category;
 
     amountInputElement.value = String(transaction.amount ?? "");
-    const datePart = new Date().toISOString().split('T')[0];
-    const occurredOn = transaction.occurredOn ?? datePart;
+    const occurredOn = transaction.occurredOn ?? toLocalIso(new Date()).slice(0, 10);
 
     dateInputElement.value = occurredOn.split('T')[0] ?? occurredOn;
-    timeInputElement.value = parseTimeFromOccurred(occurredOn) || formatTimeExplicit(new Date()); // Якщо часу немає — ставимо поточний
+    timeInputElement.value = parseTimeFromOccurred(occurredOn) || toLocalIso(new Date()).slice(11, 16); // Якщо часу немає — ставимо поточний
     noteInputElement.value = transaction.note ?? "";
 
     submitButtonElement.textContent = "Зберегти зміни";
@@ -400,7 +401,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     renderCategoryChips(state.categories);
 
     if (!dateInputElement.value) {
-      dateInputElement.value = todayAsIsoDate();
+      dateInputElement.value = toLocalIso(new Date()).slice(0, 10);
     }
 
     renderRecentEntries();
@@ -624,9 +625,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   function resetFormFields() {
     amountInputElement.value = '';
 
-    dateInputElement.value = new Date().toISOString().split('T')[0];
-    // Встановлюємо час на поточний момент при очищенні форми
-    timeInputElement.value = formatTimeExplicit(new Date());
+    refreshDateTimeFields();
     noteInputElement.value = '';
     formState.selectedCategoryName = null;
     refreshAmountPreview();
@@ -634,6 +633,53 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     renderCategoryChips(store.getState().categories);
     clearFieldError(amountInputElement, amountErrorElement);
     clearFieldError(categoryChipsElement, categoryErrorElement);
+  }
+
+  /**
+   * Ставить поточні дату й час у поля форми.
+   *
+   * Дата береться з `toLocalIso`, а не з `toISOString()`: остання
+   * за контрактом переводить в UTC, а в Києві це з 00:00 до 03:00
+   * означає вчорашню дату — і жоден рефреш її не виправив би.
+   */
+  function refreshDateTimeFields() {
+    const currentDateTime = toLocalIso(new Date());
+    const currentDate = currentDateTime.slice(0, 10);
+
+    dateInputElement.value = currentDate;
+    formState.autoFilledDate = currentDate;
+    timeInputElement.value = currentDateTime.slice(11, 16);
+  }
+
+  /**
+   * Чи користувач ще нічого не вводив у цій формі.
+   *
+   * Оновлення при поверненні на вкладку перезаписує поля, тож
+   * воно мусить пропускати форму, у якій уже щось є. «Щось
+   * ввела» — це не лише сума: ручна зміна дати теж має
+   * залишитися, бо людина могла навмисно вносити витрату за вчора.
+   */
+  function isFormUntouched() {
+    if (isEditing()) return false;
+    if (formState.selectedCategoryName !== null) return false;
+    if (amountInputElement.value.trim() !== '') return false;
+    if (noteInputElement.value.trim() !== '') return false;
+    return !formState.autoFilledDate || dateInputElement.value === formState.autoFilledDate;
+  }
+
+  /**
+   * Повернення на вкладку оновлює дату й час.
+   *
+   * Поля живуть у формі, а не в розмітці: вони заповнюються під
+   * час ініціалізації. Тому вкладка, що пролежала годину, показує
+   * вчорашню дату й старий час, поки її не перезавантажити.
+   */
+  function initDateTimeRefresh() {
+    on(document, "visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      if (!isFormUntouched()) return;
+      refreshDateTimeFields();
+    });
   }
 
   /* ── Щойно записані ──────────────────────────────────────────────────── */
