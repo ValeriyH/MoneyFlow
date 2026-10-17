@@ -143,6 +143,43 @@ function trimToLimit(periodKeys, mustKeep, limit) {
 
   return [...kept];
 }
+
+/**
+ * Скільки місяців знімка лишається на диску.
+ *
+ * Офлайн потрібен для «що я витратив вчора», а не за архів за два
+ * роки. Три місяці — це трохи більше за 100 КБ, і цифри на екрані
+ * лишаються правильними: місяць у кеші завжди цілий.
+ */
+const CACHED_MONTHS_LIMIT = 3;
+
+/**
+ * Відкидає місяці, які старші за останні.
+ *
+ * Межа — по місяцях, а не по днях: частковий місяць дав би
+ * правильне на око, але неправильне за сумою «Залишок». Краще
+ * не показувати місяць узагалі, ніж показати його половину.
+ *
+ * @param {{ transactions: Array<object>, loadedPeriods: Array<string> }} snapshot
+ * @param {string} activePeriodKey — його не відкидаємо навіть якщо він найстаріший
+ * @returns {{ transactions: Array<object>, loadedPeriods: Array<string> }}
+ */
+function trimSnapshotToRecentMonths(snapshot, activePeriodKey) {
+  const keptPeriods = trimToLimit(
+    snapshot.loadedPeriods ?? [],
+    [activePeriodKey],
+    CACHED_MONTHS_LIMIT,
+  );
+
+  if (keptPeriods.length === (snapshot.loadedPeriods ?? []).length) return snapshot;
+
+  return Object.assign({}, snapshot, {
+    loadedPeriods: keptPeriods,
+    transactions: (snapshot.transactions ?? []).filter((transaction) =>
+      keptPeriods.includes(String(transaction.occurredOn ?? "").slice(0, 7)),
+    ),
+  });
+}
 /** Незмінний початковий стан — до нього повертаємось при помилці. */
 function createInitialState() {
   return {
@@ -530,7 +567,7 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       lastSyncedAt: new Date().toISOString(),
     };
 
-    saveCachedSnapshot(nextState);
+    saveCachedSnapshot(trimSnapshotToRecentMonths(nextState, this.#activePeriodKey));
     this.#patch(nextState);
     return true;
   }
@@ -759,13 +796,13 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
    * б два рядки про одну витрату.
    */
   #saveCache() {
-    saveCachedSnapshot({
+    saveCachedSnapshot(trimSnapshotToRecentMonths({
       viewer: this.#state.viewer,
       categories: this.#state.categories,
       transactions: this.#state.transactions,
       loadedPeriods: this.#state.loadedPeriods,
       lastSyncedAt: this.#state.lastSyncedAt,
-    });
+    }, this.#activePeriodKey));
   }
 
   /** @param {string} queuedEntryId */

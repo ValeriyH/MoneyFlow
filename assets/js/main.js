@@ -88,6 +88,7 @@ budgetStore.setActivePeriod(sessionState.activePeriodKey);
 
 initPeriodSwitcher();
 initLifecycleListeners();
+registerOfflineShell();
 
 // Без адреси бекенда нема чого показувати: краще чесне пояснення,
 // ніж мовчки невдалі запити до undefined.
@@ -102,6 +103,28 @@ if (!isEnvironmentConfigured()) {
   requestSync();
 } else {
   accessGate.render(false);
+}
+
+/* ── Офлайн-оболонка ─────────────────────────────────────────────────────── */
+
+/**
+ * Реєструє service worker, який віддає застосунок без мережі.
+ *
+ * Реєстрація навмисно не блокує запуск і не кидає помилок: без
+ * service worker усе працює як завжди, тільки без офлайну. Відмова
+ * від реєстрації — не привід не показувати бюджет.
+ *
+ * @returns {void}
+ */
+function registerOfflineShell() {
+  if (!("serviceWorker" in navigator)) return;
+  if (!window.isSecureContext) return;
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch((error) => {
+      console.warn("[MoneyFlow] Service worker не зареєстровано:", error);
+    });
+  });
 }
 
 /* ── Синхронізація ──────────────────────────────────────────────────────── */

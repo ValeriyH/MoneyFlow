@@ -5,19 +5,16 @@
  * і переповнюється. Тому кожна операція проходить через `try/catch`,
  * а приватний режим не ламає весь застосунок.
  *
- * ── Два сховища, два призначення ──────────────────────────────────────────
+ * ── Одне сховище ────────────────────────────────────────────────────────────
  *
- * `localStorage` живе назавжди. Сюди йде те, що має пережити вкладку:
- * сесія та черга несинхронізованих записів.
+ * `localStorage`, і все живе там: сесія, черга несинхронізованих
+ * записів і кеш знімка. Кеш обмежено трьома останніми місяцями —
+ * див. `CACHED_MONTHS_LIMIT` у `budgetStore`.
  *
- * `sessionStorage` живе до закриття вкладки. Сюди йде кеш знімка —
- * уся історія операцій. Коли вкладку закрито, копія на диску зникає:
- * витягнути її з профілю браузера вже неможливо.
- *
- * Різниця не в зручності (кеш переживає перезавантаження в обох
- * випадках), а в тому, що лишається на диску, поки ви не закрили
- * вкладку. Це різниця між «дані лежать у браузері постійно» і
- * «дані лежать, поки ними користуються».
+ * Раніше кеш лежав у `sessionStorage`, щоб історія не залишалася на
+ * диску. Відмовилися від цього разом із офлайном: без кешу на
+ * диску застосунок у метро просто не відкривається, а тримати
+ * двадцять місяців замість трьох нічого не додає.
  */
 
 import { PENDING_ENTRIES_KEY_PREFIX, STORAGE_KEYS } from "../config.js";
@@ -89,32 +86,6 @@ function writeJsonValue(storageKey, value) {
  */
 function removeValue(storageKey) {
   removeFrom(window.localStorage, storageKey);
-}
-
-/**
- * @param {string} storageKey
- * @param {unknown} fallbackValue
- * @returns {unknown}
- */
-function readSessionJsonValue(storageKey, fallbackValue) {
-  return readFrom(window.sessionStorage, storageKey, fallbackValue);
-}
-
-/**
- * @param {string} storageKey
- * @param {unknown} value
- * @returns {boolean}
- */
-function writeSessionJsonValue(storageKey, value) {
-  return writeTo(window.sessionStorage, storageKey, value);
-}
-
-/**
- * @param {string} storageKey
- * @returns {void}
- */
-function removeSessionValue(storageKey) {
-  removeFrom(window.sessionStorage, storageKey);
 }
 
 /* ── Сесія ───────────────────────────────────────────────────────────────── */
@@ -274,16 +245,20 @@ export function loadActivePeriod() {
 
 /**
  * Останній успішно завантажений знімок потрібен, щоб показати дані
- * одразу при відкритті, не чекаючи на мережу.
+ * одразу при відкритті — і щоб застосунок взагалі відкрився без
+ * мережі: оболонка приходить із кешу service worker'а, а дані —
+ * звідси.
  *
- * Живе у sessionStorage, а не в localStorage: тут вся історія
- * операцій відкритим текстом, і вона не має лежати на диску весь час.
- * Закрили вкладку — копії немає.
+ * Живе у localStorage, а не у sessionStorage. Раніше це було
+ * свідомою відмовою від офлайну: вся історія витрат лежала б на
+ * диску відкритим текстом. Зараз тримаємо обмежене вікно — див.
+ * `CACHED_MONTHS_LIMIT` — і погоджуємо, що резервна копія телефону
+ * його забиратиме.
  *
- * @returns {{ viewer: object, categories: Array<object>, transactions: Array<object>, lastSyncedAt: string } | null}
+ * @returns {{ viewer: object, categories: Array<object>, transactions: Array<object>, loadedPeriods: Array<string>, lastSyncedAt: string } | null}
  */
 export function loadCachedSnapshot() {
-  const cachedSnapshot = readSessionJsonValue(STORAGE_KEYS.cachedSnapshot, null);
+  const cachedSnapshot = readJsonValue(STORAGE_KEYS.cachedSnapshot, null);
   return cachedSnapshot && Array.isArray(cachedSnapshot.transactions) ? cachedSnapshot : null;
 }
 
@@ -292,10 +267,10 @@ export function loadCachedSnapshot() {
  * @returns {void}
  */
 export function saveCachedSnapshot(snapshot) {
-  writeSessionJsonValue(STORAGE_KEYS.cachedSnapshot, snapshot);
+  writeJsonValue(STORAGE_KEYS.cachedSnapshot, snapshot);
 }
 
 /** @returns {void} */
 export function clearCachedSnapshot() {
-  removeSessionValue(STORAGE_KEYS.cachedSnapshot);
+  removeValue(STORAGE_KEYS.cachedSnapshot);
 }
