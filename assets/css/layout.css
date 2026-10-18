@@ -27,9 +27,15 @@
   gap: var(--space-2);
 }
 
+/* Логотип — картинка, а не емодзі: той однаковий у всіх застосунків
+   і не схожий на гроші. Розмір задаємо атрибутом в розмітці, щоб
+   браузер не зміщував решту до завантаження файлу. */
 .app-header__logo {
-  font-size: 24px;
-  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .app-header__title {

@@ -1,0 +1,375 @@
+/* ==========================================================================
+   solid.css — новий вигляд: темна тема і суцільна навігація.
+
+   Увесь файл активується лише атрибутом на <html>:
+
+       <html data-style="solid">
+
+   Коли атрибута немає — працює звичайний вигляд із base/layout/
+   components. Тому старий стиль не постраждає: жодне правило тут
+   не має сили без цього атрибута, і вимикається перемикачем.
+
+   Порядок файлів важливий: solid.css підключено після усіх інших,
+   щоб перебивати їхні правила, а не навпаки.
+   ========================================================================== */
+
+[data-style="solid"] {
+  color-scheme: dark;
+
+  /* ── Поверхні ────────────────────────────────────────────────────────── */
+  --color-canvas: #0d1014;
+  --color-surface: #151a21;
+  --color-surface-muted: #1b212a;
+  --color-overlay: rgba(0, 0, 0, 0.62);
+
+  /* ── Текст ───────────────────────────────────────────────────────────── */
+  --color-text-primary: #e9edf4;
+  --color-text-secondary: #9aa5b6;
+  --color-text-tertiary: #6b7688;
+
+  /* ── Акценти ────────────────────────────────────────────────────────── */
+  --color-accent: #4d8dff;
+  --color-accent-strong: #2f74f5;
+  --color-accent-soft: #17233d;
+
+  --color-expense: #fb7185;
+  --color-expense-soft: #33161f;
+  --color-positive: #34d399;
+  --color-positive-soft: #10291f;
+  --color-warning: #fbbf24;
+  --color-warning-soft: #322510;
+
+  /* ── Лінії ──────────────────────────────────────────────────────────── */
+  --color-border: #232a35;
+  --color-border-strong: #333c4b;
+
+  /* У темній темі тіні майже не видно, тому кордони роблять
+     роботу за них: картка має бути відділена від фону. */
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  /* ── Геометрія: нові кругліші ───────────────────────────────────────── */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+}
+
+[data-style="solid"] body {
+  /* Легкий вертикальний градієнт: фон перестає бути плоским
+     прямокутником і не тягне увагу до країв екрана. */
+  background-image: linear-gradient(180deg, #10141a 0%, var(--color-canvas) 320px);
+  background-attachment: fixed;
+}
+
+[data-style="solid"] code {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* ── Шапка: суцільна панель замість рядка окремих елементів ───────────── */
+
+[data-style="solid"] .app {
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-4) var(--space-6);
+}
+
+[data-style="solid"] .app-header {
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+[data-style="solid"] .app-header__logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+
+[data-style="solid"] .app-header__title {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+/* ── Навігація місяцями: одне ціле ────────────────────────────────────── */
+
+/* Головна ідея: стрілки і назва живуть у спільній «капсулі» з
+   тлою, тож читаються як один елемент керування, а не три
+   розкиданих. Натискання будь-кої частини змінює місяць. */
+
+[data-style="solid"] .period-switcher {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 3px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+}
+
+[data-style="solid"] .period-switcher .icon-button {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  border-radius: 50%;
+}
+
+[data-style="solid"] .period-switcher .icon-button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-border);
+}
+
+[data-style="solid"] .period-switcher .icon-button:disabled {
+  opacity: 0.3;
+}
+
+[data-style="solid"] .period-switcher__label {
+  min-width: 132px;
+  padding: 0 var(--space-2);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+/* ── Картки ────────────────────────────────────────────────────────────── */
+
+[data-style="solid"] .card,
+[data-style="solid"] .gate__card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+[data-style="solid"] .card__title {
+  color: var(--color-text-primary);
+}
+
+[data-style="solid"] .card__header {
+  border-bottom: 1px solid var(--color-border);
+}
+
+[data-style="solid"] .card__badge {
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+/* ── Таби розділів ────────────────────────────────────────────────────── */
+
+[data-style="solid"] .view-tabs {
+  gap: var(--space-1);
+  padding: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-card);
+}
+
+[data-style="solid"] .view-tabs__tab {
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+}
+
+[data-style="solid"] .view-tabs__tab.is-active {
+  color: var(--color-text-primary);
+  background: var(--color-surface-muted);
+}
+
+/* ── Поля ──────────────────────────────────────────────────────────────── */
+
+[data-style="solid"] .field__input {
+  background: var(--color-surface-muted);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+[data-style="solid"] .field__input:hover {
+  border-color: #414c5e;
+}
+
+[data-style="solid"] .field__input:focus {
+  background: var(--color-surface);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(77, 141, 255, 0.18);
+}
+
+[data-style="solid"] .field__label {
+  color: var(--color-text-secondary);
+}
+
+/* ── Чіпси категорій ──────────────────────────────────────────────────── */
+
+[data-style="solid"] .chip {
+  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+[data-style="solid"] .chip:hover {
+  border-color: var(--color-border-strong);
+}
+
+[data-style="solid"] .chip.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* ── Список операцій ───────────────────────────────────────────────────── */
+
+[data-style="solid"] .transaction {
+  border-bottom-color: var(--color-border);
+}
+
+[data-style="solid"] .transaction:last-child {
+  border-bottom: none;
+}
+
+[data-style="solid"] .transaction__icon {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+}
+
+[data-style="solid"] .transaction:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+[data-style="solid"] .transaction__action {
+  color: var(--color-text-tertiary);
+}
+
+[data-style="solid"] .transaction__action:hover:not(:disabled) {
+  background: var(--color-surface-muted);
+  color: var(--color-text-primary);
+}
+
+/* ── Кнопки ────────────────────────────────────────────────────────────── */
+
+[data-style="solid"] .button--primary {
+  background: var(--color-accent);
+  color: #08101f;
+  font-weight: 700;
+}
+
+[data-style="solid"] .button--primary:hover:not(:disabled) {
+  background: var(--color-accent-strong);
+}
+
+[data-style="solid"] .button:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-tertiary);
+  border-color: var(--color-border);
+}
+
+[data-style="solid"] .icon-button {
+  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+[data-style="solid"] .icon-button:hover:not(:disabled) {
+  background: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+/* ── Профіль і синхронізація ───────────────────────────────────────────── */
+
+[data-style="solid"] .profile-chip {
+  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+[data-style="solid"] .sync-indicator {
+  color: var(--color-text-secondary);
+}
+
+/* ── Смуга «щойно записано» ────────────────────────────────────────────── */
+
+[data-style="solid"] .recent-entry {
+  background: var(--color-surface-muted);
+  border-color: var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* ── Перемикач вигляду ─────────────────────────────────────────────────── */
+
+/* Назви я вибрав «вигляд», бо в цьому застосунку «тема» —
+   окреме поняття, і плутати їх не варто. */
+
+[data-style="solid"] .style-toggle {
+  background: var(--color-accent-soft);
+  border-color: rgba(77, 141, 255, 0.4);
+  color: var(--color-accent);
+}
+
+[data-style="solid"] .style-toggle:hover {
+  background: rgba(77, 141, 255, 0.22);
+}
+
+.style-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.style-toggle:hover {
+  color: var(--color-text-primary);
+}
+
+/* ── Вузький екран ─────────────────────────────────────────────────────── */
+
+@media (max-width: 620px) {
+  [data-style="solid"] .app-header {
+    grid-template-columns: auto auto;
+    grid-template-areas:
+      "brand   actions"
+      "switch  switch";
+    gap: var(--space-3);
+  }
+
+  [data-style="solid"] .app-header__brand { grid-area: brand; }
+  [data-style="solid"] .app-header__actions { grid-area: actions; justify-self: end; }
+  [data-style="solid"] .period-switcher { grid-area: switch; justify-self: stretch; }
+
+  /* На телефоні капсула місяця займає всю ширину, а стрілки
+     стають квадратними — так їх важче промахнутися. */
+  [data-style="solid"] .period-switcher .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+
+  [data-style="solid"] .period-switcher__label {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+  }
+
+  [data-style="solid"] .style-toggle__text {
+    display: none;
+  }
+
+  [data-style="solid"] .style-toggle {
+    padding: 9px;
+  }
+}

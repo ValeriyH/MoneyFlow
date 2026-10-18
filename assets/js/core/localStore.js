@@ -274,3 +274,20 @@ export function saveCachedSnapshot(snapshot) {
 export function clearCachedSnapshot() {
   removeValue(STORAGE_KEYS.cachedSnapshot);
 }
+
+/* ── Вигляд ──────────────────────────────────────────────────────────────── */
+
+/**
+ * @returns {string | null} збережений вигляд або null, якщо ще не вибирали
+ */
+export function loadUiStyle() {
+  return readJsonValue(STORAGE_KEYS.uiStyle, null);
+}
+
+/**
+ * @param {string} styleName
+ * @returns {void}
+ */
+export function saveUiStyle(styleName) {
+  writeJsonValue(STORAGE_KEYS.uiStyle, styleName);
+}

@@ -7,12 +7,26 @@
   <meta name="description" content="MoneyFlow — сімейний бюджет на Google Таблиці">
   <title>MoneyFlow — Сімейний Бюджет</title>
 
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💸</text></svg>">
+  <link rel="icon" href="assets/icons/icon-32.png" sizes="32x32">
   <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
   <link rel="manifest" href="app.webmanifest">
   <link rel="stylesheet" href="assets/css/base.css">
   <link rel="stylesheet" href="assets/css/layout.css">
   <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/solid.css">
+
+  <!-- Вигляд ставимо до першого малювання, інакше на темній темі
+       спалахує світлий екран. Ключ той самий, що й у localStore. -->
+  <script>
+    (function () {
+      try {
+        var style = JSON.parse(localStorage.getItem("moneyflow.ui-style"));
+        if (style === "solid") document.documentElement.setAttribute("data-style", "solid");
+      } catch (e) {
+        /* приватний режим або пошкоджене значення - лишаємо стандартний */
+      }
+    })();
+  </script>
 </head>
 
 <body>
@@ -94,7 +108,7 @@
 
     <header class="app-header">
       <div class="app-header__brand">
-        <span class="app-header__logo" aria-hidden="true">💸</span>
+        <img class="app-header__logo" src="assets/icons/icon-128.png" width="28" height="28" alt="">
         <span class="app-header__title">MoneyFlow</span>
       </div>
 
@@ -105,6 +119,12 @@
       </div>
 
       <div class="app-header__actions">
+        <button class="style-toggle" id="styleToggleButton" type="button" aria-pressed="false"
+                title="Спробувати новий вигляд">
+          <span aria-hidden="true">◐</span>
+          <span class="style-toggle__text">Старий вигляд</span>
+        </button>
+
         <button class="sync-indicator" id="syncIndicator" type="button"
                 data-state="loading" title="Перевірити синхронізацію">
           <span class="sync-indicator__dot" aria-hidden="true"></span>

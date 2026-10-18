@@ -29,6 +29,7 @@ import { initOverviewPanel } from "./ui/overviewPanel.js";
 import { initProfileChip } from "./ui/profileChip.js";
 import { initRegistrationPanel } from "./ui/registrationPanel.js";
 import { initSyncIndicator } from "./ui/syncIndicator.js";
+import { initStyleToggle } from "./ui/styleToggle.js";
 import { initTransactionList } from "./ui/transactionList.js";
 import { showToast } from "./ui/toast.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
@@ -88,6 +89,7 @@ budgetStore.setActivePeriod(sessionState.activePeriodKey);
 
 initPeriodSwitcher();
 initLifecycleListeners();
+initStyleToggle();
 registerOfflineShell();
 
 // Без адреси бекенда нема чого показувати: краще чесне пояснення,

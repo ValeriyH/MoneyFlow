@@ -35,7 +35,20 @@ export const STORAGE_KEYS = {
   activeView: "moneyflow.active-view",
   collapsedCards: "moneyflow.collapsed-cards",
   cachedSnapshot: "moneyflow.cached-snapshot",
+  uiStyle: "moneyflow.ui-style",
 };
+
+/**
+ * Вигляд застосунку.
+ *
+ * `classic` — звичайний світлий, буквальний стиль.
+ * `solid` — новий: темна тема і суцільна навігація.
+ *
+ * Тримаємо обидва, поки новий не відточений: родині звичка важливіша
+ * за свіжий дизайн, а перемикач коштує одного рядка.
+ */
+export const UI_STYLE_CLASSIC = "classic";
+export const UI_STYLE_SOLID = "solid";
 
 /**
  * Початок ключа черги. Далі дописується логін:
