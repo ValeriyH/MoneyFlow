@@ -16,12 +16,17 @@
   <link rel="stylesheet" href="assets/css/solid.css">
 
   <!-- Вигляд ставимо до першого малювання, інакше на темній темі
-       спалахує світлий екран. Ключ той самий, що й у localStore. -->
+       спалахує світлий екран. Ключ той самий, що й у localStore.
+       Разом ставимо theme-color: браузер бере колір панелей з
+       метатега, а не з CSS, тож без нього вони лишалися б білими. -->
   <script>
     (function () {
       try {
         var style = JSON.parse(localStorage.getItem("moneyflow.ui-style"));
-        if (style === "solid") document.documentElement.setAttribute("data-style", "solid");
+        if (style === "solid") {
+          document.documentElement.setAttribute("data-style", "solid");
+          document.querySelector('meta[name="theme-color"]').setAttribute("content", "#0d1014");
+        }
       } catch (e) {
         /* приватний режим або пошкоджене значення - лишаємо стандартний */
       }
@@ -164,7 +169,7 @@
             <p class="field__error" id="entryAmountError" hidden></p>
 
             <p class="field__hint" id="amountHint">
-              Можна писати вираз: <code>120+80+50</code> або <code>1250/2</code>
+              Можна писати вираз: <i>120+80+50</i> або <i>1250/2</i>
             </p>
           </div>
 

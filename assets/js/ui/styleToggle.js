@@ -24,6 +24,33 @@ function isSolidSelected() {
 }
 
 /**
+ * Колір панелей браузера — верхньої адресної смужки й нижньої
+ * навігаційної. Браузер бере його з метатега, а не з CSS, тому
+ * статичне значення в темній темі лишає ці смужки білими.
+ *
+ * Значення мусять збігатися з `--color-canvas` кожного вигляду:
+ * світлий `#f1f4f8`, темний `#0d1014`.
+ */
+const THEME_COLOR_CLASSIC = "#f1f4f8";
+const THEME_COLOR_SOLID = "#0d1014";
+
+/**
+ * Ставить колір панелей браузера.
+ *
+ * @param {string} styleName
+ * @returns {void}
+ */
+function applyThemeColor(styleName) {
+  const metaElement = document.querySelector('meta[name="theme-color"]');
+  if (!metaElement) return;
+
+  metaElement.setAttribute(
+    "content",
+    styleName === UI_STYLE_SOLID ? THEME_COLOR_SOLID : THEME_COLOR_CLASSIC,
+  );
+}
+
+/**
  * Застосовує вигляд до <html>.
  *
  * @param {string} styleName
@@ -35,6 +62,8 @@ function applyStyle(styleName) {
   } else {
     document.documentElement.removeAttribute("data-style");
   }
+
+  applyThemeColor(styleName);
 }
 
 /**
@@ -66,6 +95,11 @@ function renderToggle(buttonElement) {
  */
 export function initStyleToggle() {
   const buttonElement = findById("styleToggleButton");
+
+  // Колір панелей ставимо навіть без натискання: мітка у <head>
+  // могла не спрацювати (приватний режим, пошкоджене значення),
+  // і тоді браузер показав би світлі смужки у темному вигляді.
+  applyThemeColor(isSolidSelected() ? UI_STYLE_SOLID : UI_STYLE_CLASSIC);
 
   on(buttonElement, "click", () => {
     const nextStyle = isSolidSelected() ? UI_STYLE_CLASSIC : UI_STYLE_SOLID;
