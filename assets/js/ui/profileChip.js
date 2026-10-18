@@ -14,12 +14,9 @@ function toInitial(userName) {
 }
 
 /** @returns {{ render: (state: Readonly<object>) => void }} */
-export function initProfileChip({ onSwitchUser }) {
-  const profileChipElement = findById("profileChip");
+export function initProfileChip() {
   const profileAvatarElement = findById("profileAvatar");
   const profileNameElement = findById("profileName");
-
-  profileChipElement.addEventListener("click", onSwitchUser);
 
   /**
    * @param {Readonly<object>} state
@@ -30,7 +27,6 @@ export function initProfileChip({ onSwitchUser }) {
     profileAvatarElement.textContent = toInitial(viewer.name);
     profileAvatarElement.style.backgroundColor = viewer.color;
     profileNameElement.textContent = viewer.name;
-    profileChipElement.title = `Записано як «${viewer.name}». Натисніть, щоб змінити користувача.`;
   }
 
   return { render };

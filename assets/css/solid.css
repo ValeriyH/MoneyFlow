@@ -1,16 +1,18 @@
 /* ==========================================================================
-   solid.css — новий вигляд: темна тема і суцільна навігація.
+   solid.css — суцільний вигляд застосунку й темна тема.
 
-   Увесь файл активується лише атрибутом на <html>:
+   Різниця між світлою й темною темою — тільки кольори. Усе інше
+   спільне, тому правила нижче НЕ мають префікса [data-style="solid"]:
+   інакше світла тема лишилася б старою. Виняток один — блок токенів
+   угорі, він і є темною темою.
 
-       <html data-style="solid">
+   Файл підключено останнім: він перебиває правила base/layout/
+   components, а не навпаки. Перестав його вгору — і з'явиться старий
+   вигляд у випадку, коли його випадково забудуть.
 
-   Коли атрибута немає — працює звичайний вигляд із base/layout/
-   components. Тому старий стиль не постраждає: жодне правило тут
-   не має сили без цього атрибута, і вимикається перемикачем.
-
-   Порядок файлів важливий: solid.css підключено після усіх інших,
-   щоб перебивати їхні правила, а не навпаки.
+   Значення кольорів узяті з :root (base.css) і лише перевизначені
+   тут для темної теми. Тому правило таке: якщо колір потрібен лише
+   в одній темі — це токен, а не значення в правилі.
    ========================================================================== */
 
 [data-style="solid"] {
@@ -18,6 +20,7 @@
 
   /* ── Поверхні ────────────────────────────────────────────────────────── */
   --color-canvas: #0d1014;
+  --color-canvas-top: #10141a;
   --color-surface: #151a21;
   --color-surface-muted: #1b212a;
   --color-overlay: rgba(0, 0, 0, 0.62);
@@ -31,6 +34,8 @@
   --color-accent: #4d8dff;
   --color-accent-strong: #2f74f5;
   --color-accent-soft: #17233d;
+  --color-accent-ring: rgba(77, 141, 255, 0.18);
+  --color-on-accent: #08101f;
 
   --color-expense: #fb7185;
   --color-expense-soft: #33161f;
@@ -39,41 +44,36 @@
   --color-warning: #fbbf24;
   --color-warning-soft: #322510;
 
-  /* ── Лінії ──────────────────────────────────────────────────────────── */
+  /* ── Лінії та тіні ──────────────────────────────────────────────────── */
   --color-border: #232a35;
   --color-border-strong: #333c4b;
+  --color-border-hover: #414c5e;
 
   /* У темній темі тіні майже не видно, тому кордони роблять
      роботу за них: картка має бути відділена від фону. */
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-raised: 0 12px 32px rgba(0, 0, 0, 0.55);
-
-  /* ── Геометрія: нові кругліші ───────────────────────────────────────── */
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
 }
 
-[data-style="solid"] body {
-  /* Легкий вертикальний градієнт: фон перестає бути плоским
-     прямокутником і не тягне увагу до країв екрана. */
-  background-image: linear-gradient(180deg, #10141a 0%, var(--color-canvas) 320px);
+/* Легкий вертикальний градієнт: фон перестає бути плоским
+   прямокутником і не тягне увагу до країв екрана. */
+body {
+  background-image: linear-gradient(180deg, var(--color-canvas-top) 0%, var(--color-canvas) 320px);
   background-attachment: fixed;
 }
 
-[data-style="solid"] code {
+code {
   background: var(--color-accent-soft);
   color: var(--color-accent);
 }
 
 /* ── Шапка: суцільна панель замість рядка окремих елементів ───────────── */
 
-[data-style="solid"] .app {
+.app {
   gap: var(--space-4);
-  padding: var(--space-4) var(--space-4) var(--space-6);
 }
 
-[data-style="solid"] .app-header {
+.app-header {
   grid-template-columns: auto 1fr auto;
   gap: var(--space-4);
   padding: var(--space-3);
@@ -83,25 +83,25 @@
   box-shadow: var(--shadow-card);
 }
 
-[data-style="solid"] .app-header__logo {
+.app-header__logo {
   width: 26px;
   height: 26px;
   border-radius: 6px;
   box-shadow: 0 0 0 1px var(--color-border);
 }
 
-[data-style="solid"] .app-header__title {
+.app-header__title {
   font-size: 18px;
   letter-spacing: -0.01em;
 }
 
 /* ── Навігація місяцями: одне ціле ────────────────────────────────────── */
 
-/* Головна ідея: стрілки і назва живуть у спільній «капсулі» з
+/* Головна ідея: стрілки й назва живуть у спільній «капсулі» з
    тлою, тож читаються як один елемент керування, а не три
-   розкиданих. Натискання будь-кої частини змінює місяць. */
+   розкиданих. */
 
-[data-style="solid"] .period-switcher {
+.period-switcher {
   justify-self: center;
   display: flex;
   align-items: center;
@@ -112,7 +112,7 @@
   border-radius: var(--radius-pill);
 }
 
-[data-style="solid"] .period-switcher .icon-button {
+.period-switcher .icon-button {
   width: 34px;
   height: 34px;
   font-size: 22px;
@@ -121,18 +121,19 @@
   background: none;
   border: none;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
-[data-style="solid"] .period-switcher .icon-button:hover:not(:disabled) {
+.period-switcher .icon-button:hover:not(:disabled) {
   color: var(--color-text-primary);
   background: var(--color-border);
 }
 
-[data-style="solid"] .period-switcher .icon-button:disabled {
+.period-switcher .icon-button:disabled {
   opacity: 0.3;
 }
 
-[data-style="solid"] .period-switcher__label {
+.period-switcher__label {
   min-width: 132px;
   padding: 0 var(--space-2);
   font-size: 15px;
@@ -144,23 +145,23 @@
 
 /* ── Картки ────────────────────────────────────────────────────────────── */
 
-[data-style="solid"] .card,
-[data-style="solid"] .gate__card {
+.card,
+.gate__card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
 }
 
-[data-style="solid"] .card__title {
+.card__title {
   color: var(--color-text-primary);
 }
 
-[data-style="solid"] .card__header {
+.card__header {
   border-bottom: 1px solid var(--color-border);
 }
 
-[data-style="solid"] .card__badge {
+.card__badge {
   background: var(--color-surface-muted);
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border);
@@ -168,7 +169,7 @@
 
 /* ── Таби розділів ────────────────────────────────────────────────────── */
 
-[data-style="solid"] .view-tabs {
+.view-tabs {
   gap: var(--space-1);
   padding: 4px;
   background: var(--color-surface);
@@ -177,199 +178,205 @@
   box-shadow: var(--shadow-card);
 }
 
-[data-style="solid"] .view-tabs__tab {
+.view-tabs__tab {
   border-radius: var(--radius-pill);
   color: var(--color-text-secondary);
   font-weight: 600;
 }
 
-[data-style="solid"] .view-tabs__tab.is-active {
+.view-tabs__tab.is-active {
   color: var(--color-text-primary);
   background: var(--color-surface-muted);
 }
 
 /* ── Поля ──────────────────────────────────────────────────────────────── */
 
-[data-style="solid"] .field__input {
+.field__input {
   background: var(--color-surface-muted);
   border-color: var(--color-border-strong);
   color: var(--color-text-primary);
 }
 
-[data-style="solid"] .field__input:hover {
-  border-color: #414c5e;
+.field__input:hover {
+  border-color: var(--color-border-hover);
 }
 
-[data-style="solid"] .field__input:focus {
+.field__input:focus {
   background: var(--color-surface);
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(77, 141, 255, 0.18);
+  box-shadow: 0 0 0 3px var(--color-accent-ring);
 }
 
-[data-style="solid"] .field__label {
+.field__label {
   color: var(--color-text-secondary);
 }
 
 /* ── Чіпси категорій ──────────────────────────────────────────────────── */
 
-[data-style="solid"] .chip {
+.chip {
   background: var(--color-surface-muted);
   border-color: var(--color-border);
   color: var(--color-text-primary);
 }
 
-[data-style="solid"] .chip:hover {
+.chip:hover {
   border-color: var(--color-border-strong);
 }
 
-[data-style="solid"] .chip.is-selected {
+.chip.is-selected {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
 }
 
 /* ── Список операцій ───────────────────────────────────────────────────── */
 
-[data-style="solid"] .transaction {
+.transaction {
   border-bottom-color: var(--color-border);
 }
 
-[data-style="solid"] .transaction:last-child {
+.transaction:last-child {
   border-bottom: none;
 }
 
-[data-style="solid"] .transaction__icon {
+.transaction__icon {
   background: var(--color-surface-muted);
   border: 1px solid var(--color-border);
 }
 
-[data-style="solid"] .transaction:hover {
-  background: rgba(255, 255, 255, 0.025);
+.transaction:hover {
+  background: var(--color-surface-muted);
 }
 
-[data-style="solid"] .transaction__action {
+.transaction__action {
   color: var(--color-text-tertiary);
 }
 
-[data-style="solid"] .transaction__action:hover:not(:disabled) {
+.transaction__action:hover:not(:disabled) {
   background: var(--color-surface-muted);
   color: var(--color-text-primary);
 }
 
 /* ── Кнопки ────────────────────────────────────────────────────────────── */
 
-[data-style="solid"] .button--primary {
+.button--primary {
   background: var(--color-accent);
-  color: #08101f;
+  color: var(--color-on-accent);
   font-weight: 700;
 }
 
-[data-style="solid"] .button--primary:hover:not(:disabled) {
+.button--primary:hover:not(:disabled) {
   background: var(--color-accent-strong);
 }
 
-[data-style="solid"] .button:disabled {
+.button:disabled {
   background: var(--color-surface-muted);
   color: var(--color-text-tertiary);
   border-color: var(--color-border);
 }
 
-[data-style="solid"] .icon-button {
+.icon-button {
   background: var(--color-surface-muted);
   border-color: var(--color-border);
   color: var(--color-text-secondary);
 }
 
-[data-style="solid"] .icon-button:hover:not(:disabled) {
+.icon-button:hover:not(:disabled) {
   background: var(--color-border);
   color: var(--color-text-primary);
 }
 
 /* ── Профіль і синхронізація ───────────────────────────────────────────── */
 
-[data-style="solid"] .profile-chip {
+.profile-chip {
   background: var(--color-surface-muted);
   border-color: var(--color-border);
   color: var(--color-text-primary);
 }
 
-[data-style="solid"] .sync-indicator {
+.sync-indicator {
   color: var(--color-text-secondary);
 }
 
 /* ── Смуга «щойно записано» ────────────────────────────────────────────── */
 
-[data-style="solid"] .recent-entry {
+.recent-entry {
   background: var(--color-surface-muted);
   border-color: var(--color-border);
   border-radius: var(--radius-md);
 }
 
-/* ── Перемикач вигляду ─────────────────────────────────────────────────── */
-
-/* Назви я вибрав «вигляд», бо в цьому застосунку «тема» —
-   окреме поняття, і плутати їх не варто. */
-
-[data-style="solid"] .style-toggle {
-  background: var(--color-accent-soft);
-  border-color: rgba(77, 141, 255, 0.4);
-  color: var(--color-accent);
-}
-
-[data-style="solid"] .style-toggle:hover {
-  background: rgba(77, 141, 255, 0.22);
-}
-
-.style-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-pill);
-  color: var(--color-text-secondary);
-  transition: background var(--motion-fast), color var(--motion-fast);
-}
-
-.style-toggle:hover {
-  color: var(--color-text-primary);
-}
-
 /* ── Вузький екран ─────────────────────────────────────────────────────── */
 
+/* На телефоні шапка лишається на одній лінії: логотип, місяць,
+   опції. Назву застосунку тут нема — вона вже на іконці. Місяць
+   стоїть у центрі й стискається першим із трьох, бо назва
+   залишається читабельною довше за логотип. */
+
 @media (max-width: 620px) {
-  [data-style="solid"] .app-header {
-    grid-template-columns: auto auto;
-    grid-template-areas:
-      "brand   actions"
-      "switch  switch";
-    gap: var(--space-3);
+  .app {
+    padding-left: var(--space-2);
+    padding-right: var(--space-2);
   }
 
-  [data-style="solid"] .app-header__brand { grid-area: brand; }
-  [data-style="solid"] .app-header__actions { grid-area: actions; justify-self: end; }
-  [data-style="solid"] .period-switcher { grid-area: switch; justify-self: stretch; }
-
-  /* На телефоні капсула місяця займає всю ширину, а стрілки
-     стають квадратними — так їх важче промахнутися. */
-  [data-style="solid"] .period-switcher .icon-button {
-    width: 44px;
-    height: 44px;
+  .app-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    padding: var(--space-2);
   }
 
-  [data-style="solid"] .period-switcher__label {
+  .period-switcher {
+    justify-self: stretch;
+    min-width: 0;
+  }
+
+  .period-switcher .icon-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .period-switcher__label {
     flex: 1;
     min-width: 0;
-    font-size: 16px;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  [data-style="solid"] .style-toggle__text {
+  .app-header__actions {
+    gap: var(--space-1);
+  }
+}
+
+/* На найвужчому екрані місця вистачає на «листопада 2026 р.» лише
+   впритузь: 119 px тексту проти 113 px місця. Тому й логотип
+   зникає (назва вже є на іконці), і поля стискаються до 4 px. */
+
+@media (max-width: 359px) {
+  .app-header__logo {
     display: none;
   }
 
-  [data-style="solid"] .style-toggle {
-    padding: 9px;
+  .app-header {
+    padding-left: var(--space-1);
+    padding-right: var(--space-1);
+  }
+
+  .period-switcher .icon-button {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+/* Нижче 480px ховається текст біля крапки синхронізації й ім'я
+   біля аватарки, тож бічні поля в цих двох кнопках лише з'їдають
+   місце для місяця. */
+
+@media (max-width: 480px) {
+  .profile-chip {
+    padding: 4px;
+  }
+
+  .sync-indicator {
+    padding: 6px;
   }
 }

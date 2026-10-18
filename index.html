@@ -124,22 +124,30 @@
       </div>
 
       <div class="app-header__actions">
-        <button class="style-toggle" id="styleToggleButton" type="button" aria-pressed="false"
-                title="Спробувати новий вигляд">
-          <span aria-hidden="true">◐</span>
-          <span class="style-toggle__text">Старий вигляд</span>
-        </button>
-
         <button class="sync-indicator" id="syncIndicator" type="button"
                 data-state="loading" title="Перевірити синхронізацію">
           <span class="sync-indicator__dot" aria-hidden="true"></span>
           <span class="sync-indicator__text">Завантаження…</span>
         </button>
 
-        <button class="profile-chip" id="profileChip" type="button" title="Змінити користувача">
-          <span class="profile-chip__avatar" id="profileAvatar" aria-hidden="true">—</span>
-          <span class="profile-chip__name" id="profileName">—</span>
-        </button>
+        <!--
+          Іконка користувача відкриває меню опцій. Роль menu з ARIA
+          тут не ставимо: стандарт вимагає керування стрілками й
+          окремої стрічки фокуса, а звичайні кнопки вже працюють
+          Tab-ом і Enter-ом. Роль була б брехнею — краще розкриття.
+        -->
+        <div class="user-menu-host">
+          <button class="profile-chip" id="profileChip" type="button"
+                  aria-expanded="false" aria-label="Опції користувача" title="Опції користувача">
+            <span class="profile-chip__avatar" id="profileAvatar" aria-hidden="true">—</span>
+            <span class="profile-chip__name" id="profileName">—</span>
+          </button>
+
+          <div class="user-menu" id="userMenu" hidden>
+            <p class="user-menu__header">Користувач <span id="userMenuName">—</span></p>
+            <div class="user-menu__list" id="userMenuList"></div>
+          </div>
+        </div>
       </div>
     </header>
 

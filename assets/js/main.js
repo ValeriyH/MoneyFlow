@@ -20,6 +20,7 @@ import {
 } from "./core/localStore.js";
 import { buildLoginProof, isCryptoAvailable } from "./domain/crypto.js";
 import { currentPeriodKey, shiftPeriodKey } from "./domain/period.js";
+import { describeAppearance, syncThemeColor, toggleAppearance } from "./ui/appearance.js";
 import { initAccessGate } from "./ui/accessGate.js";
 import { initBudgetPanel } from "./ui/budgetPanel.js";
 import { initCollapsibleCards } from "./ui/collapsibleCards.js";
@@ -29,9 +30,9 @@ import { initOverviewPanel } from "./ui/overviewPanel.js";
 import { initProfileChip } from "./ui/profileChip.js";
 import { initRegistrationPanel } from "./ui/registrationPanel.js";
 import { initSyncIndicator } from "./ui/syncIndicator.js";
-import { initStyleToggle } from "./ui/styleToggle.js";
 import { initTransactionList } from "./ui/transactionList.js";
 import { showToast } from "./ui/toast.js";
+import { initUserMenu } from "./ui/userMenu.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
 
 /** Стан сесії, який живе лише до перезавантаження сторінки. */
@@ -65,7 +66,22 @@ const entryForm = initEntryForm({
   onSubmit: submitTransactionEntry,
   onUpdateSubmit: updateTransactionEntry,
 });
-const profileChip = initProfileChip({ onSwitchUser: confirmUserSwitch });
+const profileChip = initProfileChip();
+
+/**
+ * Вміст меню опцій. Тут, а не в userMenu.js: модуль знає лише,
+ * як показати список, а що в ньому бути — задумка диспетчера.
+ * Кожен пункт додається одним рядком.
+ */
+const userMenu = initUserMenu({
+  triggerElement: findById("profileChip"),
+  menuElement: findById("userMenu"),
+  nameElement: findById("userMenuName"),
+  items: [
+    { id: "appearance", label: "Тема", getValue: describeAppearance, onSelect: toggleAppearance },
+    { id: "logout", label: "Вийти", onSelect: confirmAndExit },
+  ],
+});
 
 initCollapsibleCards();
 initViewSwitcher();
@@ -89,7 +105,7 @@ budgetStore.setActivePeriod(sessionState.activePeriodKey);
 
 initPeriodSwitcher();
 initLifecycleListeners();
-initStyleToggle();
+syncThemeColor();
 registerOfflineShell();
 
 // Без адреси бекенда нема чого показувати: краще чесне пояснення,
@@ -261,6 +277,7 @@ function renderApplicationState(state) {
 
   syncIndicator.render(state);
   profileChip.render(state);
+  userMenu.setName(state.viewer.name);
 
   updatePeriodNavigationAvailability(referenceDate);
 }
@@ -334,10 +351,10 @@ function describeQueuedEntries(count) {
 /**
  * Виходить із системи на цьому пристрої.
  *
- * Один вихід на два кнопки (профіль у шапці й підвал) — щоб текст
- * і поведінка не розходилися. Нічого не губиться: черга належить
- * людині й дійде, коли вона знову увійде; стирається лише кеш
- * знімка, щоб наступний не бачив чужих витрат.
+ * Один вихід на два місця (пункт у меню опцій і посилання в підвалі)
+ * — щоб текст і поведінка не розходилися. Нічого не губиться:
+ * черга належить людині й дійде, коли вона знову увійде; стирається
+ * лише кеш знімка, щоб наступний не бачив чужих витрат.
  */
 function confirmAndExit() {
   const { pendingEntries } = budgetStore.getState();
@@ -466,11 +483,4 @@ async function updateTransactionEntry(transactionId, changes) {
 
   showToast(error?.message ?? "Правка в черзі — повторимо за мережі", "warning");
   return { deliveredImmediately, error };
-}
-
-/**
- * Профіль у шапці — це той самий вихід із системи.
- */
-function confirmUserSwitch() {
-  confirmAndExit();
 }

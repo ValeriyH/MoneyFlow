@@ -5,6 +5,9 @@
 :root {
   /* Поверхні */
   --color-canvas: #f1f4f8;
+  /* Верх градієнта фону: сторінка не має бути плоским прямокутником,
+     але в світлій темі це має бути ледь помітне, а не «небо». */
+  --color-canvas-top: #ffffff;
   --color-surface: #ffffff;
   --color-surface-muted: #f7f9fc;
   --color-overlay: rgba(15, 23, 42, 0.45);
@@ -19,6 +22,12 @@
   --color-accent: #2563eb;
   --color-accent-strong: #1d4ed8;
   --color-accent-soft: #e8efff;
+  /* Обвідка під час фокусу: напівпрозора, щоб її не довелось
+     підбирати під кожен колір тла вручну. */
+  --color-accent-ring: rgba(37, 99, 235, 0.16);
+  /* Текст на насиченому акценті. У світлій темі акцент темний,
+     тож текст білий; у темній навпаки. */
+  --color-on-accent: #ffffff;
 
   --color-expense: #e11d48;
   --color-expense-soft: #ffe9ee;
@@ -30,13 +39,16 @@
   /* Лінії та тіні */
   --color-border: #e4e9f0;
   --color-border-strong: #cdd5e0;
+  /* Наведення на поле вводу: у світлій темі темніша, у темній —
+     світліша. Тому це окремий токен, а не те саме, що й у фокусі. */
+  --color-border-hover: #b6c0cf;
   --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 6px 20px rgba(16, 24, 40, 0.06);
   --shadow-raised: 0 8px 28px rgba(16, 24, 40, 0.14);
 
-  /* Геометрія */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
+  /* Геометрія: кругліша, ніж була. Один стиль для обох тем. */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
   --radius-pill: 999px;
 
   /* Ритм */

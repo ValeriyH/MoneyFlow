@@ -73,7 +73,7 @@ $contentTypes = @{
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 
-# Порт може бути зайнятий не зак��тим попереднім запуском.
+# Порт може бути зайнятий не закритим попереднім запуском.
 # Кажемо про це людською мовою замість стеку.
 try {
     $listener.Start()

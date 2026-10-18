@@ -401,6 +401,67 @@ select.field__input {
   white-space: nowrap;
 }
 
+/* ── Меню опцій ────────────────────────────────────────────────────────── */
+
+.user-menu-host {
+  position: relative;
+}
+
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  min-width: 210px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+/* На вузькому екрані шпарина праворуч порожня, тож краю безпечніше
+   не торкатися: інакше меню виходить за межі вікна. */
+.user-menu__header {
+  margin: 0;
+  padding: 6px 10px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.user-menu__list {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+}
+
+.user-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast);
+}
+
+.user-menu__item:hover {
+  background: var(--color-surface-muted);
+}
+
+.user-menu__value {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
 /* ── Категорії (чіпси) ─────────────────────────────────────────────────── */
 
 .category-field {
@@ -447,7 +508,7 @@ select.field__input {
   border-color: var(--color-border-strong);
 }
 
-/* Неактивна катег��рія лишається доступною, тож її не можна робити
+/* Неактивна категорія лишається доступною, тож її не можна робити
    схожою на заблоковану: сірий текст і прибраний курсор читались
    б як «натиснути не можна». Тому помітка — рамка й тло, а текст
    лишається контрастним. */
