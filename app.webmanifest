@@ -8,8 +8,12 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f1f4f8",
-  "theme_color": "#f1f4f8",
+
+  "// background_color": "Екран запуску. Темний навмисно: маніфест читається один раз, під час встановлення, тож змінити його з коду неможливо. Темна смуга на світлій схемі очі не ріже, а навпаки.",
+  "background_color": "#0d1014",
+
+  "// theme_color": "Колір панелей встановленого застосунку. Оновлюється з meta[name=theme-color] під час роботи, але на старті Android бере саме це значення.",
+  "theme_color": "#0d1014",
   "icons": [
     {
       "src": "assets/icons/icon-192.png",
