@@ -34,6 +34,7 @@ import { initTransactionList } from "./ui/transactionList.js";
 import { showToast } from "./ui/toast.js";
 import { initUserMenu } from "./ui/userMenu.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
+import { showGoalsTab } from "./ui/goals.js";
 
 /** Стан сесії, який живе лише до перезавантаження сторінки. */
 const sessionState = {
@@ -84,8 +85,25 @@ const userMenu = initUserMenu({
 });
 
 initCollapsibleCards();
-initViewSwitcher();
-initRegistrationPanel();
+
+  const viewSwitcher = initViewSwitcher();
+
+  // Якщо останній перегляд — «Цілі», завантажуємо цілі одразу після перезавантаження
+  if (document.getElementById('appMain')?.dataset.activeView === 'goals') {
+    showGoalsTab();
+  }
+
+  // Додаємо обробник для вкладок "goals"
+  const tabElements = document.querySelectorAll('.view-tabs__tab');
+  tabElements.forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (tab.dataset.view === 'goals') {
+        showGoalsTab();
+      }
+    });
+  });
+  
+  initRegistrationPanel();
 
 const accessGate = initAccessGate({
   onUnlock: unlockApplication,

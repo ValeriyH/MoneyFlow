@@ -25,6 +25,7 @@ const SHEET_TRANSACTIONS = 'Transactions';
 const SHEET_CATEGORIES = 'Categories';
 const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
+const SHEET_GOALS = 'Goals';
 
 /**
  * Часовий пояс для всіх дат і часів.
@@ -55,6 +56,15 @@ const HEADER_USER_NAME = 'Ім\'я';
 const HEADER_USER_COLOR = 'Колір';
 const HEADER_USER_PASSWORD_HASH = 'Пароль';
 const HEADER_USER_ACTIVE = 'Активний';
+
+const HEADER_GOAL_ID = 'ID';
+const HEADER_GOAL_NAME = 'Назва';
+const HEADER_GOAL_TARGET_AMOUNT = 'Цільова сума';
+const HEADER_GOAL_CURRENT_AMOUNT = 'Поточна сума';
+const HEADER_GOAL_DEADLINE = 'Дедлайн';
+const HEADER_GOAL_BEGIN_DATE = 'Початок';
+const HEADER_GOAL_TYPE = 'Тип';
+const HEADER_GOAL_ACTIVE = 'Активна';
 
 /*
  * Колонки, без яких аркуш не має сенсу.
@@ -99,6 +109,11 @@ const PERIOD_ROW_WINDOW_PADDING = 60;
 
 const REQUIRED_USER_COLUMNS = [
   HEADER_USER_NAME, HEADER_USER_COLOR, HEADER_USER_PASSWORD_HASH, HEADER_USER_ACTIVE,
+];
+
+const REQUIRED_GOAL_COLUMNS = [
+  HEADER_GOAL_ID, HEADER_GOAL_NAME, HEADER_GOAL_TARGET_AMOUNT, HEADER_GOAL_CURRENT_AMOUNT,
+  HEADER_GOAL_DEADLINE, HEADER_GOAL_BEGIN_DATE, HEADER_GOAL_TYPE, HEADER_GOAL_ACTIVE,
 ];
 
 /* ── Самостійна реєстрація ──────────────────────────────────────────────── */
@@ -193,6 +208,18 @@ function doPost(request) {
           ok: true,
           transaction: updateTransaction(payload.transaction, viewer),
           snapshot: buildSnapshot(viewer, periods, limitPeriod),
+        });
+
+      case 'fetchGoals':
+        return respondWithJson({
+          ok: true,
+          goals: fetchGoals(viewer, periods),
+        });
+
+      case 'adjustGoal':
+        return respondWithJson({
+          ok: true,
+          goal: adjustGoal(payload, viewer),
         });
 
       default:
@@ -299,6 +326,7 @@ function buildSnapshot(viewer, periods, limitPeriod) {
     categories: readCategoriesWithLimits([limitPeriod]),
     periods: periods,
     transactions: readTransactions(periods),
+    goals: fetchGoals(viewer, periods)
   };
 }
 
@@ -553,7 +581,6 @@ function registerUser(userName, userColor, userPassword) {
     isActive: true,
   });
 
-  Logger.log('Користувач «' + trimmedName + '» доданий.');
   return 'Користувач «' + trimmedName + '» доданий.';
 }
 
@@ -583,7 +610,6 @@ function resetUserPassword(userName, newPassword) {
   replaceUserPassword(trimmedName, plainPassword);
 
   const result = 'Пароль для «' + trimmedName + '» змінено. Старі сесії завершено.';
-  Logger.log(result);
   return result;
 }
 
@@ -1407,4 +1433,156 @@ function respondWithError(error) {
     },
     isExpectedError ? error.details : {},
   ));
+}
+
+/* ── Допоміжні функції розрахунку цілей ────────────────────────────────────────── */
+
+/**
+ * Обчислює відсоток виконання цілі.
+ *
+ * @param {number} currentAmount — поточна сума
+ * @param {number} targetAmount — цільова сума
+ * @returns {number} відсоток від 0 до 100
+ */
+function calculateGoalProgress(currentAmount, targetAmount) {
+  if (targetAmount <= 0) return 100;
+  const progress = (currentAmount / targetAmount) * 100;
+  return Math.min(100, Math.max(0, Math.round(progress)));
+}
+
+/**
+ * Обчислює щомісячну суму, яку потрібно відкладати, щоб досягти цілі до дедлайну.
+ * 
+ * Логіка:
+ * 1. Початок збору = Max(begindate, now) — якщо початкова дата минула, починаємо зараз
+ * 2. Рахуємо кількість місяців від початку збору до дедлайну (а не від beginDate)
+ * 3. Якщо дедлайн вже минув — повертаємо 0
+ *
+ * @param {number} currentAmount — поточна сума
+ * @param {number} targetAmount — цільова сума
+ * @param {string} beginDate — дата початку (РРРР-ММ-ДД)
+ * @param {string} deadline — дата дедлайну (РРРР-ММ-ДД)
+ * @returns {number} щомісячна сума, або 0, якщо дедлайн минув або ціль досягнута
+ */
+function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, deadline) {
+  const start = new Date(beginDate);
+  const end = new Date(deadline);
+  const now = new Date();
+
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return 0;
+  if (currentAmount >= targetAmount) return 0;
+
+  // Початок збору = Max(begindate, now) — якщо початкова дата минула, починаємо зараз
+  const actualStart = start > now ? start : now;
+  
+  // Якщо дедлайн вже минув — повертаємо 0
+  if (end < now) return 0;
+
+  const remainingAmount = targetAmount - currentAmount;
+  
+  // Рахуємо кількість місяців від початку збору до дедлайну
+  const monthsDiff = (end.getFullYear() - actualStart.getFullYear()) * 12 + 
+                     (end.getMonth() - actualStart.getMonth());
+  
+  // Якщо місяців менше 1 — рахуємо як за 1 місяць
+  const divisor = Math.max(1, monthsDiff);
+  
+  return Math.round(remainingAmount / divisor);
+}
+
+/* ── API функції для цілей ────────────────────────────────────────────────────── */
+
+/**
+ * Отримує список активних цілей користувача.
+ *
+ * @param {BudgetUser} viewer
+ * @param {Array<string>} periods — ключі «РРРР-ММ» (не використовується, але зберігаємо для сумісності)
+ * @returns {Array<object>} список цілей з розрахунками прогресу та щомісячної суми
+ */
+function fetchGoals(viewer, periods) {
+  const sheet = getRequiredSheet(SHEET_GOALS);
+  const records = readSheetAsRecords(SHEET_GOALS, REQUIRED_GOAL_COLUMNS);
+  
+  return records
+    .filter(function (record) {
+      return isTruthyFlag(record[HEADER_GOAL_ACTIVE]);
+    })
+    .map(function (record) {
+      const current = toPositiveNumber(record[HEADER_GOAL_CURRENT_AMOUNT]);
+      const target = toPositiveNumber(record[HEADER_GOAL_TARGET_AMOUNT]);
+      const begin = toIsoDate(record[HEADER_GOAL_BEGIN_DATE]);
+      const deadline = toIsoDate(record[HEADER_GOAL_DEADLINE]);
+
+      return {
+        id: String(record[HEADER_GOAL_ID] || '').trim(),
+        name: String(record[HEADER_GOAL_NAME] || '').trim(),
+        deadline: deadline,
+        type: String(record[HEADER_GOAL_TYPE] || '').trim(),
+        active: isTruthyFlag(record[HEADER_GOAL_ACTIVE]),
+        progress: calculateGoalProgress(current, target),
+        monthlyRequirement: calculateMonthlyRequirement(current, target, begin, deadline),
+      };
+    });
+}
+
+/**
+ * Коригує поточну суму цілі (додає або віднімає).
+ *
+ * @param {object} payload — { id, amount }
+ * @param {BudgetUser} viewer
+ * @returns {object} оновлена ціль
+ */
+function adjustGoal(payload, viewer) {
+  const sheet = getRequiredSheet(SHEET_GOALS);
+  const indexByName = readSheetHeader(sheet).index;
+  const idColumnIndex = indexByName.get(HEADER_GOAL_ID.toLowerCase());
+  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
+  const beginColumnIndex = indexByName.get(HEADER_GOAL_BEGIN_DATE.toLowerCase());
+  
+  const rowIndex = findGoalRowIndexById(sheet, payload.id, indexByName);
+  if (rowIndex === -1) {
+    throw new RequestError('Ціль з таким ID не знайдено', 'BAD_REQUEST');
+  }
+
+  const currentAmount = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
+  const adjustment = Number(payload.amount) || 0;
+  const newAmount = Math.max(0, currentAmount + adjustment);
+
+  sheet.getRange(rowIndex, currentColumnIndex + 1).setValue(newAmount);
+
+  const updatedCurrent = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
+  const target = toPositiveNumber(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_TARGET_AMOUNT.toLowerCase()) + 1).getValue());
+  const begin = toIsoDate(sheet.getRange(rowIndex, beginColumnIndex + 1).getValue());
+  const deadline = toIsoDate(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_DEADLINE.toLowerCase()) + 1).getValue());
+
+  return {
+    id: payload.id,
+    progress: calculateGoalProgress(updatedCurrent, target),
+    monthlyRequirement: calculateMonthlyRequirement(updatedCurrent, target, begin, deadline),
+  };
+}
+
+/**
+ * Шукає індекс рядка цілі за її ID.
+ *
+ * @param {Sheet} sheet
+ * @param {string} id
+ * @param {Map<string, number>} indexByName
+ * @returns {number} номер рядка або -1
+ */
+function findGoalRowIndexById(sheet, id, indexByName) {
+  const normalizedId = String(id || '').trim();
+  if (normalizedId === '') return -1;
+
+  const lastRowIndex = sheet.getLastRow();
+  if (lastRowIndex < 2) return -1;
+
+  const idColumnIndex = indexByName.get(HEADER_GOAL_ID.toLowerCase());
+  const idValues = sheet.getRange(2, idColumnIndex + 1, lastRowIndex - 1, 1).getValues();
+
+  for (let i = 0; i < idValues.length; i++) {
+    if (String(idValues[i][0]).trim() === normalizedId) return i + 2;
+  }
+
+  return -1;
 }

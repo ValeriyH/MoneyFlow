@@ -9,6 +9,7 @@
  * Окремо про пароль: він не залишає браузер у жодному запиті.
  * Замість нього йде доказ `SHA-256(SHA-256(пароль) + час)` — значення,
  * прив'язане до миттєвого часу, яке сервер приймає лише один раз.
+ *
  */
 
 import { APPS_SCRIPT_ENDPOINT, REQUEST_TIMEOUT_MS } from "../config.js";
@@ -45,6 +46,22 @@ export const API_ERROR_CODE = {
  */
 
 /**
+ * Ціль — накопичення або проект.
+ *
+ * @typedef {object} Goal
+ * @property {string} id
+ * @property {string} name
+ * @property {number} targetAmount — цільова сума (прихована в UI)
+ * @property {number} currentAmount — поточна сума (прихована в UI)
+ * @property {string} deadline — «2026-12-31» або «2026-12-31T00:00»
+ * @property {string} beginDate — «2026-01-01» або «2026-01-01T00:00»
+ * @property {string} type — «Savings» або «Project»
+ * @property {boolean} active — чи відображати ціль у веб-інтерфейсі
+ * @property {number} progress — відсоток виконання (0-100), рахується на сервері
+ * @property {number} monthlyRequirement — скільки потрібно відкладати/витрачати щомісяця, рахується на сервері
+ */
+
+/**
  * Одна операція. `pending` немає в знімку — це клієнтська копія,
  * ще в черзі відправлення.
  *
@@ -69,6 +86,7 @@ export const API_ERROR_CODE = {
  * @property {Array<BudgetCategory>} categories
  * @property {Array<string>} periods
  * @property {Array<Transaction>} transactions
+ * @property {Array<Goal>} goals
  */
 
 /** Коди, за якими треба показати екран входу.
@@ -76,6 +94,8 @@ export const API_ERROR_CODE = {
  * SESSION_EXPIRED — тимчасово: ввійдете знову й черга дійде.
  * UNAUTHORIZED — назавжди або до дії адміністратора: повторний
  * вхід не допоможе, тому черга викидається (див. budgetStore).
+ *
+ * @property {number[]} AUTH_FAILURE_CODES
  */
 export const AUTH_FAILURE_CODES = [
   API_ERROR_CODE.unauthorized,
@@ -117,6 +137,8 @@ export class ApiError extends Error {
  * addTransaction       → { ok, transaction, snapshot }
  * updateTransaction    → { ok, transaction, snapshot }
  * deleteTransaction    → { ok, deletedId, snapshot }
+ * fetchGoals           → { ok, goals }
+ * adjustGoal            → { ok, goal, snapshot }
  * ```
  *
  * Помилка ніколи не повертається — вона кидається як `ApiError`.
@@ -272,6 +294,7 @@ export function submitTransaction(sessionToken, transactionPayload, periods, lim
 
 /**
  * Видаляє операцію за її стійким ідентифікатором.
+ *
  * @param {string} sessionToken
  * @param {string} transactionId
  * @param {Array<string>} periods
@@ -295,8 +318,18 @@ export function deleteTransaction(sessionToken, transactionId, periods, limitPer
  * @param {Array<string>} periods
  * @param {string} limitPeriod
  * @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
- * віддає те, що реально лишилося в рядку, а не ехо з payload
+ * віддає те, що реально лишилося в рядку, а не ехо з payload.
  */
 export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
+}
+
+/** Завантажує список активних цілей користувача. */
+export function fetchGoals(sessionToken) {
+  return sendCommand({ action: "fetchGoals", sessionToken });
+}
+
+/** Коригує поточну суму цілі. Змінює лише currentAmount (currentAmount + amount). Повертає { id, progress, monthlyRequirement }. */
+export function adjustGoal(sessionToken, goalId, amount) {
+  return sendCommand({ action: "adjustGoal", sessionToken, id: goalId, amount });
 }

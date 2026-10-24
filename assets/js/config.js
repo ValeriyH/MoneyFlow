@@ -111,6 +111,7 @@ export const BUDGET_WARNING_THRESHOLD = 0.8;
 export const APP_VIEWS = {
   dashboard: "dashboard",
   transactions: "transactions",
+  goals: "goals",
 };
 
 /** Розділ, який показується, коли в пам'яті нічого немає. */

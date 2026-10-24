@@ -30,6 +30,7 @@ export function initViewSwitcher() {
       tabElement.classList.toggle("is-active", isActive);
       tabElement.setAttribute("aria-selected", String(isActive));
     }
+
   }
 
   /**

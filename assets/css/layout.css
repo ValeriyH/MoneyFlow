@@ -62,6 +62,14 @@
   display: none;
 }
 
+.app-main[data-active-view="goals"] [data-panel] {
+  display: none;
+}
+
+.app-main:not([data-active-view="goals"]) #goals-container {
+  display: none;
+}
+
 .view-tabs {
   display: flex;
   gap: var(--space-1);

@@ -8,6 +8,7 @@
  * Ключова ідея: будь-яка дія сперша потрапляє в чергу й одразу
  * показується в UI, і лише потім відправляється на сервер. Тому
  * інтерфейс не чекає 3 секунди, а черга гарантує доставку.
+ *
  */
 
 import { SYNC_STATE } from "../config.js";
@@ -19,6 +20,8 @@ import {
   fetchBudgetSnapshot,
   submitTransaction,
   updateTransaction,
+  fetchGoals,
+  adjustGoal,
 } from "./apiClient.js";
 import {
   clearCachedSnapshot,
@@ -36,6 +39,7 @@ const ANONYMOUS_VIEWER = { name: "", color: "#8b95a8" };
  * Помилки, з яких є сенс повторювати запит. Решта — відмова сервера
  * «назавжди»: категорія не існує, сесія прострочена. Такі
  * записи треба викидати, інакше вони вічно блокуватимуть решту черги.
+ *
  */
 const RETRYABLE_ERROR_CODES = [
   API_ERROR_CODE.network,
@@ -52,6 +56,7 @@ const RETRYABLE_ERROR_CODES = [
  * роках. Без межі список місяців перевищив би ліміт сервера, і
  * тоді перестав би працювати сам додаток — будь-який запис
  * падав би з помилкою.
+ *
  */
 const MAX_LOADED_PERIODS = 12;
 
@@ -59,7 +64,6 @@ const MAX_LOADED_PERIODS = 12;
 function isWorthRetrying(error) {
   return error instanceof ApiError && RETRYABLE_ERROR_CODES.includes(error.code);
 }
-
 
 /**
  * Термін сесії вичерпано: токен підписаний правильно, усі дані
@@ -150,6 +154,7 @@ function trimToLimit(periodKeys, mustKeep, limit) {
  * Офлайн потрібен для «що я витратив вчора», а не за архів за два
  * роки. Три місяці — це трохи більше за 100 КБ, і цифри на екрані
  * лишаються правильними: місяць у кеші завжди цілий.
+ *
  */
 const CACHED_MONTHS_LIMIT = 3;
 
@@ -212,6 +217,8 @@ function createInitialState() {
      * @type {Error | null}
      */
     lastSyncError: null,
+    /** @type {Array<object>} */
+    goals: [],
   };
 }
 
@@ -288,6 +295,7 @@ class BudgetStore {
         : readCoveredPeriods(cachedSnapshot),
       lastSyncedAt: cachedSnapshot.lastSyncedAt,
       pendingEntries: loadPendingEntries(this.#sessionLogin),
+      goals: cachedSnapshot.goals ?? [],
     });
   }
 
@@ -565,6 +573,7 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       transactions,
       loadedPeriods,
       lastSyncedAt: new Date().toISOString(),
+      goals: snapshot.goals ?? [],
     };
 
     saveCachedSnapshot(trimSnapshotToRecentMonths(nextState, this.#activePeriodKey));
@@ -793,7 +802,8 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
    * повторного запису кеш зберігав би її назавжди: після
    * перезавантаження сторінки злиття не могло б її розпізнати
    * (її id належить черзі, а не таблиці), тож у списку з'явилися
-   * б два рядки про одну витрату.
+   * б два рядки про одну й ту саму витрату.
+   *
    */
   #saveCache() {
     saveCachedSnapshot(trimSnapshotToRecentMonths({
@@ -802,6 +812,7 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       transactions: this.#state.transactions,
       loadedPeriods: this.#state.loadedPeriods,
       lastSyncedAt: this.#state.lastSyncedAt,
+      goals: this.#state.goals,
     }, this.#activePeriodKey));
   }
 
@@ -819,6 +830,35 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
     });
 
     this.#saveCache();
+  }
+
+  /**
+   * Коригує поточну суму цілі (додає або віднімає).
+   *
+   * @param {object} goal — { id, amount } — amount може бути додатнім (+) або від'ємним (-)
+   * @returns {Promise<{ success: boolean, error?: ApiError }>}
+   */
+  async adjustGoal(goal) {
+    if (!this.#sessionToken) return { success: false, error: new Error("Сесія не ініціалізована") };
+
+    try {
+      const response = await adjustGoal(this.#sessionToken, goal.id, goal.amount);
+      
+      // Оновлюємо ціль у списку (по ID)
+      this.#patch({ 
+        goals: this.#state.goals.map((g) => g.id === goal.id ? { ...g, progress: response.goal.progress, monthlyRequirement: response.goal.monthlyRequirement } : g) 
+      });
+      
+      // Зберігаємо в кеш
+      this.#saveCache();
+
+      return { success: true };
+    } catch (error) {
+      if (error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired) {
+        throw error;
+      }
+      return { success: false, error };
+    }
   }
 
   /**

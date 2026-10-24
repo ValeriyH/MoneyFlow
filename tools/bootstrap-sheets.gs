@@ -2,12 +2,13 @@
  * bootstrap-sheets.gs — ОДНОРАЗОВИЙ скрипт підготовки таблиці.
  *
  * Запускається вручну з редактора Apps Script ПЕРЕД тим, як вставити
- * основні Code.gs та auth.gs. Створює чотири аркуші з шапками, заповнює
+ * основні Code.gs та auth.gs. Створює аркуші з шапками, заповнює
  * каталог категорій, місячні бюджети й заводить користувачів.
  *
  * Після створення таблиці видаліть цей файл і вставте основні.
  *
  * Використання: рядок функції bootstrapSheets → «Запустити».
+ *
  */
 
 /**
@@ -17,6 +18,8 @@
  *
  * Вимоги: щонайменше 10 символів, мала й велика літера та цифра.
  * Перевіряє requireStrongPassword на сервері.
+ *
+ * @property {Array<object>} DEMO_USERS
  */
 const DEMO_USERS = [
   { login: 'Я',       color: '#2563eb', password: 'Grivna-2026' },
@@ -28,6 +31,8 @@ const DEMO_USERS = [
  *
  * «Активна» — так/ні. Порожньо означає «активна», тому додати категорію
  * можна, заповнивши лише назву, іконку й колір.
+ *
+ * @property {Array<Array<string>>} DEMO_CATEGORIES
  */
 const DEMO_CATEGORIES = [
   ['Продукти',       '🛒', '#0f9d58', 'Так'],
@@ -46,6 +51,8 @@ const DEMO_CATEGORIES = [
  * нижче й поправте один стовпці «Місяць». Категорія, для якої тут
  * немає рядка, лишається доступною для введення витрат, але в бюджет
  * не входить.
+ *
+ * @property {Array<Array<string>>} DEMO_LIMITS
  */
 const DEMO_LIMITS = [
   ['2026-10', 'Продукти',       12000],
@@ -58,6 +65,8 @@ const DEMO_LIMITS = [
 
 /**
  * Точка входу. Викликається вручну з редактора.
+ *
+ * @property {Array<object>} DEMO_USERS
  */
 function bootstrapSheets() {
   const spreadsheet = SpreadsheetApp.getActive();
@@ -77,6 +86,11 @@ function bootstrapSheets() {
   // Порядок колонок неважливий: сервер пише за підписами, а не позиціями.
   writeSheet(spreadsheet, 'Users', [
     'Ім\'я', 'Колір', 'Пароль', 'Активний',
+  ]);
+
+  // Новий аркуш для цілей
+  writeSheet(spreadsheet, 'Goals', [
+    'ID', 'Назва', 'Цільова сума', 'Поточна сума', 'Дедлайн', 'Початок', 'Тип', 'Активна',
   ]);
 
   fillCategories();
@@ -171,7 +185,16 @@ function hashPassword(password) {
 /**
  * Додає кілька прикладів операцій у поточному місяці.
  * Викликайте вручну, якщо хочете подивитися, як виглядає заповнений бюджет.
+ *
+ * @property {Array<Array<string>>} DEMO_TRANSACTIONS
  */
+const DEMO_TRANSACTIONS = [
+  ['2026-10-01', 'Продукти', 2450, 'Я', 'Продуктовий'],
+  ['2026-10-02', 'Кафе/Ресторани', 680, 'Дружина', 'Кав\'ярня'],
+  ['2026-10-05', 'Авто', 3100, 'Я', 'Бензин'],
+  ['2026-10-07', 'Дім/Комуналка', 4200, 'Я', 'Комуналка'],
+];
+
 function addSampleTransactions() {
   const spreadsheet = SpreadsheetApp.getActive();
   const transactionsSheet = spreadsheet.getSheetByName('Transactions');
@@ -187,15 +210,8 @@ function addSampleTransactions() {
     return new Date(today.getFullYear(), today.getMonth(), Math.max(today.getDate() - daysAgo, 1));
   }
 
-  const samples = [
-    [daysAgo(1), 'Продукти',      2450, 'Я',       'Продуктовий'],
-    [daysAgo(2), 'Кафе/Ресторани', 680, 'Дружина', 'Кав\'ярня'],
-    [daysAgo(5), 'Авто',          3100, 'Я',       'Бензин'],
-    [daysAgo(7), 'Дім/Комуналка', 4200, 'Я',       'Комуналка'],
-  ];
-
-  transactionsSheet.getRange(2, 1, samples.length, 7).setValues(
-    samples.map(function (sample) {
+  transactionsSheet.getRange(2, 1, DEMO_TRANSACTIONS.length, 7).setValues(
+    DEMO_TRANSACTIONS.map(function (sample) {
       return [Utilities.getUuid(), sample[0], sample[1], sample[2], sample[3], sample[4], new Date()];
     }),
   );
