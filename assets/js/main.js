@@ -1,11 +1,13 @@
 /**
- * main.js — точка входу й диспетчер.
+ * main.js — entry point and dispatcher.
  *
- * Єдине місце, де зустрічаються шар даних (budgetStore) і шар подання
- * (панелі форми). Тут же living цикл: розгортання при відкритті вкладки,
- * повторна спроба при поверненні мережі та при фокусі на вкладці.
+ * The only place where the data layer (budgetStore) and presentation layer
+ * (form panels) meet. The main lifecycle happens here: expansion on tab open,
+ * retry on network return, and on tab focus.
+ *
+ *
  */
-
+ 
 import { SYNC_STATE, isEnvironmentConfigured } from "./config.js";
 import { AUTH_FAILURE_CODES, openSession } from "./core/apiClient.js";
 import { budgetStore } from "./core/budgetStore.js";
@@ -35,15 +37,15 @@ import { showToast } from "./ui/toast.js";
 import { initUserMenu } from "./ui/userMenu.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
 import { showGoalsTab } from "./ui/goals.js";
-
-/** Стан сесії, який живе лише до перезавантаження сторінки. */
+ 
+/** Session state, which lives only until page reload. */
 const sessionState = {
-  /** @type {string} «2026-10» — місяць, за який користувач дивиться звіт */
+  /** @type {string} «2026-10» — the month for which the user views the report */
   activePeriodKey: loadActivePeriod() ?? currentPeriodKey(),
-  /** @type {boolean} чи вже показано застосунок */
+  /** @type {boolean} whether the app is already visible */
   isAppVisible: false,
 };
-
+ 
 const appElement = findById("app");
 const periodLabelElement = findById("periodLabel");
 const periodPrevButtonElement = findById("periodPrevButton");
@@ -54,7 +56,7 @@ const periodLoadingElement = findById("periodLoading");
 const overviewPanelElement = findById("overviewPanel");
 const budgetPanelElement = findById("budgetPanel");
 const historyPanelElement = findById("historyPanel");
-
+ 
 const overviewPanel = initOverviewPanel();
 const budgetPanel = initBudgetPanel();
 const syncIndicator = initSyncIndicator({ store: budgetStore, onManualSync: requestSync });
@@ -68,11 +70,13 @@ const entryForm = initEntryForm({
   onUpdateSubmit: updateTransactionEntry,
 });
 const profileChip = initProfileChip();
-
+ 
 /**
- * Вміст меню опцій. Тут, а не в userMenu.js: модуль знає лише,
- * як показати список, а що в ньому бути — задумка диспетчера.
- * Кожен пункт додається одним рядком.
+ * Content of the options menu. Here, not in userMenu.js: the module only knows
+ * how to show the list, and what should be in it is the dispatcher's call.
+ * Each item is added in a single line.
+ *
+ *
  */
 const userMenu = initUserMenu({
   triggerElement: findById("profileChip"),
@@ -83,17 +87,17 @@ const userMenu = initUserMenu({
     { id: "logout", label: "Вийти", onSelect: confirmAndExit },
   ],
 });
-
+ 
 initCollapsibleCards();
-
+ 
   const viewSwitcher = initViewSwitcher();
-
-  // Якщо останній перегляд — «Цілі», завантажуємо цілі одразу після перезавантаження
+ 
+  // If the last view was "Goals", load goals immediately after reload
   if (document.getElementById('appMain')?.dataset.activeView === 'goals') {
     showGoalsTab();
   }
-
-  // Додаємо обробник для вкладок "goals"
+ 
+  // Add handler for "goals" tabs
   const tabElements = document.querySelectorAll('.view-tabs__tab');
   tabElements.forEach(tab => {
     tab.addEventListener('click', () => {
@@ -104,30 +108,30 @@ initCollapsibleCards();
   });
   
   initRegistrationPanel();
-
+ 
 const accessGate = initAccessGate({
   onUnlock: unlockApplication,
   onUnlockFailed: handleUnlockFailure,
 });
-
-/* ── Підписки на стан ───────────────────────────────────────────────────── */
-
+ 
+/* -- State subscriptions --------------------------------------------------------- */
+ 
 budgetStore.subscribe(renderApplicationState);
-
-/* ── Життєвий цикл ──────────────────────────────────────────────────────── */
-
-// Відкритий місяць треба передати сховищу ДО першої синхронізації:
-// запит будується за ним, і без нього перший вхід підхопив би лише
-// поточний місяць, а на екрані лишився б «Завантаження місяця…».
+ 
+/* -- Lifecycle --------------------------------------------------------- */
+ 
+// The open month must be passed to the store before the first synchronization:
+// the request is built based on it, and without it the first login would
+// pick the current month, and the screen would stay with "Loading month...".
 budgetStore.setActivePeriod(sessionState.activePeriodKey);
-
+ 
 initPeriodSwitcher();
 initLifecycleListeners();
 syncThemeColor();
 registerOfflineShell();
-
-// Без адреси бекенда нема чого показувати: краще чесне пояснення,
-// ніж мовчки невдалі запити до undefined.
+ 
+// Without an endpoint, there is nothing to show: better an honest explanation,
+// than silent failed requests to undefined.
 if (!isEnvironmentConfigured()) {
   setVisibility(findById("unconfiguredGate"), true);
 } else if (!isCryptoAvailable()) {
@@ -140,169 +144,178 @@ if (!isEnvironmentConfigured()) {
 } else {
   accessGate.render(false);
 }
-
-/* ── Офлайн-оболонка ─────────────────────────────────────────────────────── */
-
+ 
+/* ── Offline Shell ─────────────────────────────────────────────────────── */
+ 
 /**
- * Реєструє service worker, який віддає застосунок без мережі.
+ * Registers the service worker, which serves the app offline.
  *
- * Реєстрація навмисно не блокує запуск і не кидає помилок: без
- * service worker усе працює як завжди, тільки без офлайну. Відмова
- * від реєстрації — не привід не показувати бюджет.
+ * Registration is intentionally non-blocking and doesn't throw errors:
+ * without the service worker, everything works as usual, only without
+ * offline support. Rejection of registration
+ * is not a reason to hide the budget.
  *
  * @returns {void}
+ *
+ *
  */
 function registerOfflineShell() {
   if (!("serviceWorker" in navigator)) return;
   if (!window.isSecureContext) return;
-
+ 
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch((error) => {
-      console.warn("[MoneyFlow] Service worker не зареєстровано:", error);
+      console.warn("[MoneyFlow] Service worker was not registered:", error);
     });
   });
 }
-
-/* ── Синхронізація ──────────────────────────────────────────────────────── */
-
+ 
+/* ── Synchronization ──────────────────────────────────────────────────────── */
+ 
 /** @returns {Promise<void>} */
 async function requestSync() {
   const hasSucceeded = await budgetStore.synchronize();
-
-  // Сервер віддає тільки запитані місяці, тож синхронізація
-  // закриває лише ті, що були в пам'яті. Обраний місяць міг бути
-  // іншим (його видно одразу після перезавантаження) — діванемо
-  // його окремим запитом. Якщо він уже є, це нібий виклик.
+ 
+  // The server returns only requested months, so synchronization
+  // closes only those that were in memory. The selected month might
+  // be other (it's visible immediately after reload) — therefore we
+  // request it separately. If it's already there, it's a redundant call.
   await budgetStore.loadPeriod(sessionState.activePeriodKey);
-
+ 
   if (!hasSucceeded) {
     const { syncState, syncMessage, syncErrorCode } = budgetStore.getState();
-
+ 
     if (AUTH_FAILURE_CODES.includes(syncErrorCode)) {
-      // Будь-яка відмова в авторизації означає одне: треба увійти
-      // знову. Токен прибираємо, інакше наступне відкриття знову
-      // піде в той самий відмовий запит.
+      // Any authorization failure means one thing: we need to log in
+      // again. The token is removed, otherwise the next opening would
+      // again go to the same failed request.
       //
-      // Чергу це не торкається - нею опікується budgetStore:
-      // на SESSION_EXPIRED записи лишаються, на UNAUTHORIZED
-      // (вимкнули акаунт, змінили пароль) - видаляються.
+      // The queue is not affected: it's managed by budgetStore:
+      // on SESSION_EXPIRED, records remain, on UNAUTHORIZED
+      // (account disabled, password changed, token forged) - they are deleted.
       budgetStore.setSession(null);
       forgetSession();
-
-      // Застосунок ховаємо разом із gate: інакше під формою
-      // лишилися б старі витрати, які вже не синхронізуються.
+      
+      // The app is hidden along with the gate: otherwise old ones
+      // would remain under the form, which are no longer synchronized.
       setVisibility(appElement, false);
       sessionState.isAppVisible = false;
       accessGate.revealAgain(syncMessage);
       return;
     }
-
+ 
     if (syncState === SYNC_STATE.offline) {
       showToast("Немає мережі — нові записи чекають у черзі", "warning");
       return;
     }
-
+ 
     showToast(syncMessage || "Не вдалося синхронізуватися", "error");
   }
 }
-
+ 
 /**
- * Обмін логіну й пароля на сесійний токен.
+ * Exchange of login and password for a session token.
  *
- * Пароль не відправляється: браузер сам рахує доказ і лише його
- * передає. Сервер відповідає підписаним токеном і своїм часом —
- * останній потрібен, щоб наступний вхід правильно прив'язаний
- * до часу, навіть якщо годинник пристрою кривий.
+ * The password is not sent: the browser calculates the proof itself and only
+ * passes it. The server responds with a signed token and its time — the last
+ * one is needed to correctly bind the next login to the time, even if the
+ * device clock is wrong.
  *
  * @param {{ login: string, password: string }} credentials
  * @returns {Promise<void>}
+ *
+ *
  */
 async function unlockApplication({ login, password }) {
   const requestTimestamp = currentServerAlignedTime();
   const proof = await buildLoginProof(password, requestTimestamp);
-
+ 
   const response = await openSession({ login, proof, timestamp: requestTimestamp });
-
+ 
   saveClockOffset(response.serverTime - Date.now());
   saveSession(response.token, login);
-
+ 
   budgetStore.setSession({ token: response.token, login });
-
+ 
   const hasSucceeded = await budgetStore.synchronize();
   if (!hasSucceeded) {
     budgetStore.setSession(null);
     forgetSession();
-
-    // Прокидаємо саму помилку, а не її текст: екран входу має
-    // відрізнити «невірний пароль» від «забагато спроб».
+    
+    // Pass the error itself, not its text: the login screen must
+    // distinguish "wrong password" from "too many attempts".
     throw budgetStore.getState().lastSyncError
       ?? new Error("Не вдалося підключитися до таблиці. Спробуйте пізніше.");
   }
-
+ 
   revealApplication();
   showToast("Готово, бюджет підключено", "success");
 }
-
+ 
 function handleUnlockFailure() {
   budgetStore.setSession(null);
   forgetSession();
 }
-
+ 
 function revealApplication() {
   setVisibility(appElement, true);
   sessionState.isAppVisible = true;
   accessGate.render(true);
-
-  // Стан уже містить дані (sync відпрацював до показу застосунку),
-  // але підписка їх пропустила, бо застосунок був невидимий.
-  // Тому один примусовий рендер тут, а не передбачення в підписці.
+ 
+  // State already contains data (sync worked before showing the app),
+  // but the subscription missed it, because the app was invisible.
+  // Therefore, one forced render here, and not a prediction in the subscription.
   renderApplicationState(budgetStore.getState());
 }
-
-/* ── Відмальовування ────────────────────────────────────────────────────── */
-
+ 
+/* ── Rendering ────────────────────────────────────────────────────── */
+ 
 /**
- * Єдиний рендер на весь стан застосунку: спершу дешеві підписи,
- * потім важкі панелі. Так при кожній синхронізації не блимає форма.
+ * Single render for the entire application state: first cheap labels,
+ * then heavy panels. This way, at each synchronization, it doesn't blink.
  *
  * @param {Readonly<object>} state
+ *
+ *
  */
 function renderApplicationState(state) {
   if (!sessionState.isAppVisible) return;
-
+ 
   const referenceDate = new Date();
-
+ 
   periodLabelElement.textContent = formatPeriodCaption(sessionState.activePeriodKey);
   lastSyncLabelElement.textContent = describeLastSync(state.lastSyncedAt);
-
-  // Поки місяць не прийшов із сервера, панелі ховаємо. Показувати
-  // замість них нулі було б брехнею: виглядало б так, наче в цьому
-  // місяці ніхто нічого не витратив.
+ 
+  // While the month hasn't arrived from the server, we hide the panels. Showing
+  // zeros instead would be a lie: it would look like the user spent nothing
+  // in this month.
   const isPeriodReady = budgetStore.isPeriodLoaded(sessionState.activePeriodKey);
   setVisibility(periodLoadingElement, !isPeriodReady);
   setVisibility(overviewPanelElement, isPeriodReady);
   setVisibility(budgetPanelElement, isPeriodReady);
   setVisibility(historyPanelElement, isPeriodReady);
-
-  // Форма працює завжди: введення видатків не має чекати на панелі.
+ 
+  // The form works always: entering expenses doesn't have to wait for the panel.
   entryForm.render(state);
-
+ 
   if (isPeriodReady) {
     overviewPanel.render(state, sessionState.activePeriodKey, referenceDate);
     budgetPanel.render(state, sessionState.activePeriodKey, referenceDate);
     transactionList.render(state, sessionState.activePeriodKey);
   }
-
+ 
   syncIndicator.render(state);
   profileChip.render(state);
   userMenu.setName(state.viewer.name);
-
+ 
   updatePeriodNavigationAvailability(referenceDate);
 }
-
+ 
 /**
  * @param {string} periodKey
  * @returns {string}
+ *
+ *
  */
 function formatPeriodCaption(periodKey) {
   const monthCaption = new Intl.DateTimeFormat("uk-UA", {
@@ -312,139 +325,153 @@ function formatPeriodCaption(periodKey) {
   const [year, month] = periodKey.split("-").map(Number);
   return monthCaption.format(new Date(year, month - 1, 1));
 }
-
+ 
 /**
  * @param {string | null} lastSyncedAt
  * @returns {string}
+ *
+ *
  */
 function describeLastSync(lastSyncedAt) {
   if (!lastSyncedAt) return "Ще не синхронізовано";
-
+ 
   const timeCaption = new Intl.DateTimeFormat("uk-UA", {
     day: "numeric",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
-
+ 
   return `Остання синхронізація: ${timeCaption.format(new Date(lastSyncedAt))}`;
 }
-
+ 
 /**
- * Не дає зайти в майбутнє — там все одно нічого немає.
+ * Prevents going into the future — there is nothing there.
  * @param {Date} referenceDate
+ *
+ *
  */
 function updatePeriodNavigationAvailability(referenceDate) {
   periodNextButtonElement.disabled = sessionState.activePeriodKey >= currentPeriodKey(referenceDate);
 }
-
-/* ── Вихід із системи ────────────────────────────────────────────────────── */
-
+ 
+/* ── Logout ────────────────────────────────────────────────────────── */
+ 
 /**
- * «1 запис у черзі залишиться», «2 записи ... залишаться»,
- * «5 записів ... залишаться».
+ * "1 record remains in the queue", "2 records ... remain",
+ * "5 records ... remain".
  *
- * Українські числівники вимагають узгодження і з дієсловом:
- * «1 запис залишаться» — граматично неправильно. Тому рахуємо
- * разом із формою дієслова, а не лише іменник.
+ * Ukrainian numbers require agreement with the verb:
+ * "1 record remain" — grammatically incorrect. Therefore, we count
+ * together with the verb form, and not just the noun.
  *
  * @param {number} count
  * @returns {string}
+ *
+ *
  */
 function describeQueuedEntries(count) {
   const lastDigit = count % 10;
   const lastTwoDigits = count % 100;
-
+ 
   if (lastDigit === 1 && lastTwoDigits !== 11) {
     return `${count} запис у черзі залишиться й дійде`;
   }
-
+ 
   if (lastDigit >= 2 && lastDigit <= 4 && (lastTwoDigits < 12 || lastTwoDigits > 14)) {
     return `${count} записи в черзі залишаться й дійдуть`;
   }
-
+ 
   return `${count} записів у черзі залишаться й дійдуть`;
 }
-
+ 
 /**
- * Виходить із системи на цьому пристрої.
+ * Log out on this device.
  *
- * Один вихід на два місця (пункт у меню опцій і посилання в підвалі)
- * — щоб текст і поведінка не розходилися. Нічого не губиться:
- * черга належить людині й дійде, коли вона знову увійде; стирається
- * лише кеш знімка, щоб наступний не бачив чужих витрат.
+ * One logout in two places (an option in the options menu and a link in the footer)
+ * — so that the text and behavior do not diverge. Nothing is lost:
+ * the queue belongs to the person and will arrive when they log in again; only
+ * the snapshot cache is cleared — so the next user doesn't see someone else's
+ * expenses.
+ *
+ *
  */
 function confirmAndExit() {
   const { pendingEntries } = budgetStore.getState();
-
+ 
   const message = pendingEntries.length > 0
     ? `Вийти з системи? ${describeQueuedEntries(pendingEntries.length)}, ` +
       `коли ви знову увійдете.`
     : "Вийти з системи?";
-
+ 
   if (!window.confirm(message)) return;
-
+ 
   forgetSession();
   budgetStore.reset();
   window.location.reload();
 }
-
-/* ── Навігація місяцями ─────────────────────────────────────────────────── */
-
+ 
+/* ── Month Navigation ────────────────────────────────────────────────── */
+ 
 function initPeriodSwitcher() {
   on(periodPrevButtonElement, "click", () => {
     moveActivePeriodBy(-1);
   });
-
+ 
   on(periodNextButtonElement, "click", () => {
     moveActivePeriodBy(1);
   });
-
+ 
   on(logoutButtonElement, "click", confirmAndExit);
 }
-
+ 
 /**
  * @param {number} offsetInMonths
+ *
+ *
  */
 function moveActivePeriodBy(offsetInMonths) {
   const nextPeriodKey = shiftPeriodKey(sessionState.activePeriodKey, offsetInMonths);
-
+ 
   sessionState.activePeriodKey = nextPeriodKey;
   saveActivePeriod(nextPeriodKey);
   budgetStore.setActivePeriod(nextPeriodKey);
   renderApplicationState(budgetStore.getState());
-
-  // Місяць, якого ще немає в пам'яті, треба запитати окремо: сервер
-  // віддає тільки те, що попросили. Уже завантажений — миттєво,
-  // без запиту: цього разу він лишається в пам'яті до кінця сесії.
+ 
+  // The month that is or was not in memory must be requested separately:
+  // the server returns only what was requested. If it's already there,
+  // it's instant, no request: this time it stays in memory until the end
+  // of the session.
   budgetStore.loadPeriod(nextPeriodKey);
 }
-
-/* ── Реакція на зовнішні події ──────────────────────────────────────────── */
-
+ 
+/* ── Reaction to External Events ──────────────────────────────────────────── */
+ 
 function initLifecycleListeners() {
   window.addEventListener("online", () => {
     if (budgetStore.getState().pendingEntries.length > 0) requestSync();
   });
-
+ 
   window.addEventListener("offline", () => {
     renderApplicationState(budgetStore.getState());
   });
-
+ 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
     if (!budgetStore.getState().lastSyncedAt) return;
-
+ 
     const minutesSinceLastSync = (Date.now() - Date.parse(budgetStore.getState().lastSyncedAt)) / 60000;
     if (minutesSinceLastSync > 3) requestSync();
   });
 }
-
-/* ── Дії користувача ────────────────────────────────────────────────────── */
-
+ 
+/* ── User Actions ─────────────────────────────────────────────────────── */
+ 
 /**
  * @param {object} transactionDraft
  * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+ *
+ *
  */
 async function submitTransactionEntry(transactionDraft) {
   const transactionToSave = {
@@ -452,53 +479,58 @@ async function submitTransactionEntry(transactionDraft) {
     id: crypto.randomUUID(),
     recordedAt: new Date().toISOString(),
   };
-
+ 
   const { deliveredImmediately, error } = await budgetStore.addTransaction(transactionToSave);
-
+ 
   if (deliveredImmediately) {
-    showToast(`Записано: ${transactionDraft.category}`, "success");
+    showToast(`Збережено: ${transactionDraft.category}`, "success");
   }
-
+ 
   return { deliveredImmediately, error };
 }
-
+ 
 /**
  * @param {object} transaction
+ * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+ *
+ *
  */
 async function confirmAndRemoveTransaction(transaction) {
   const shouldRemove = window.confirm(
     `Видалити операцію «${transaction.category}» на ${transaction.occurredOn}?`,
   );
   if (!shouldRemove) return;
-
+ 
   const { deliveredImmediately, error } = await budgetStore.removeTransaction(transaction);
-
+ 
   if (deliveredImmediately) {
     showToast("Операцію видалено", "success");
     return;
   }
-
+ 
   showToast(error?.message ?? "Видалення в черзі — повторимо за мережі", "warning");
 }
-
+ 
 /**
- * Переписує наявну операцію.
+ * Overwrites an existing record.
  *
- * `changes` не містить `id` і `user`: перший сервер шукає сам за
- * номером рядка, а «Хто» він і так бере зі свого токена.
+ * `changes` does not contain `id` and `user`: the first server finds
+ * by the row number, and "Who" it is taken from its own token.
  *
  * @param {string} transactionId
  * @param {{ amount: number, category: string, occurredOn: string, note: string }} changes
  * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+ *
+ *
  */
 async function updateTransactionEntry(transactionId, changes) {
   const { deliveredImmediately, error } = await budgetStore.updateTransaction(transactionId, changes);
-
+ 
   if (deliveredImmediately) {
     showToast("Зміни збережено", "success");
     return { deliveredImmediately, error };
   }
-
+ 
   showToast(error?.message ?? "Правка в черзі — повторимо за мережі", "warning");
   return { deliveredImmediately, error };
 }

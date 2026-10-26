@@ -1,6 +1,8 @@
 /**
- * transactionList.js — транзакції за обраний місяць: видалити або
- * переписати наявний запис однією кнопкою.
+ * transactionList.js — transactions for the selected month: delete or
+ * overwrite an existing record with one button.
+ *
+ *
  */
 
 import { HISTORY_PAGE_SIZE } from "../config.js";
@@ -13,6 +15,8 @@ import { clearChildren, createElement, findById, on, setVisibility } from "./dom
  * @param {(transaction: object) => void} dependencies.onDeleteRequest
  * @param {(transaction: object) => void} dependencies.onEditRequest
  * @returns {{ render: (state: Readonly<object>, periodKey: string) => void }}
+ *
+ *
  */
 export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   const listElement = findById("transactionList");
@@ -25,6 +29,7 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   /**
    * @param {Readonly<object>} state
    * @param {string} periodKey
+   *
    */
   function render(state, periodKey) {
     categoryMetaByName.clear();
@@ -38,10 +43,10 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
       ? `${periodTransactions.length} операцій`
       : "—";
 
-    // Сортування — завжди, у двох станах. Інакше розгорнутий список
-    // показував би записи в порядку таблиці: сервер їх не
-    // впорядковує, а `takeRecentTransactions` єдине місце, де
-    // визначено порядок.
+    // Sorting — always, in two states. Otherwise, the expanded list
+    // would show records in the order they are in the table: the server does
+    // not sort them, and `takeRecentTransactions` is the only place where
+    // the order is defined.
     const transactionsToRender = takeRecentTransactions(
       periodTransactions,
       isExpanded ? periodTransactions.length : HISTORY_PAGE_SIZE,
@@ -69,8 +74,8 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
         render(state, periodKey);
       });
 
-      // Кнопка — елемент списку, тож обгортаємо в <li>: інакше в <ul>
-      // лежить кнопка, а це некоректна розмітка.
+      // Button is a list element, so we wrap it in <li>: otherwise the button
+      // would be directly in <ul>, which is incorrect markup.
       listElement.append(createElement("li", { className: "transaction-list__more", children: [expandButton] }));
     }
   }
@@ -78,6 +83,7 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   /**
    * @param {object} transaction
    * @returns {HTMLElement}
+   *
    */
   function createTransactionItem(transaction) {
     const categoryMeta = categoryMetaByName.get(transaction.category);
@@ -87,8 +93,8 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
 
     const iconElement = createElement("span", {
       className: "transaction__icon",
-      // Категорію могли прибрати з таблиці — тоді в історії лишається
-      // нейтральна крапка, щоб старий запис не зник без причини.
+      // Category might have been removed from the table — then a neutral
+      // dot remains in the history so that the old record doesn't disappear for no reason.
       textContent: categoryMeta?.icon ?? "•",
       attributes: { "aria-hidden": "true" },
     });
@@ -101,9 +107,9 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
       }),
     );
 
-    // Комент — окремим рядком. Поруч із датою й категорією він
-    // уміщався на два-три слова, а на телефоні це був рядок
-    // без змісту: видно було тільки початок.
+    // Comment — as a separate line. Next to the date and category, it
+    // used to take up two or three words, and on a phone, it was a line
+    // with no content: only the beginning was visible.
     if (transaction.note) {
       bodyElement.append(
         createElement("span", {
@@ -132,9 +138,9 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
     });
     on(deleteButtonElement, "click", () => onDeleteRequest(transaction));
 
-    // Правка йде у ту саму форму, що й додавання: окремий екран
-    // для неї означав би другу валідацію, другий розбір виразу суми
-    // й другий набір правил наповнення.
+    // Editing goes into the same form as adding: a separate screen
+    // for it would mean a second validation, a second sum expression analysis
+    // and a second set of filling rules.
     const editButtonElement = createElement("button", {
       className: "transaction__action",
       textContent: "✎",
@@ -150,16 +156,17 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   }
 
   /**
-   * Третій рядок: коли витрата й хто її вніс.
+   * Third line: when the spending occurred and who submitted it.
    *
    * @param {object} transaction
    * @returns {string}
+   *
    */
   function buildMetaLine(transaction) {
     const clockTime = formatClockTime(transaction.occurredOn);
     const datePart = formatShortDate(transaction.occurredOn);
-    // Час показуємо лише тоді, коли він реально є: у старих записах
-    // його немає, і порожній рядок виглядав би як недолік формату.
+    // Time is shown only if it actually exists: in old records
+    // it's missing, and an empty string would look like a formatting bug.
     const whenPart = clockTime ? `${datePart}, ${clockTime}` : datePart;
 
     return `${whenPart} · ${transaction.user || "—"}`;

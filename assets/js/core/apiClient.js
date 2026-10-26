@@ -1,24 +1,25 @@
 /**
- * apiClient.js — єдиний шар, який знає про Google Apps Script.
- * Інші модулі не знають ні про URL, ні про формат відповіді, ні про помилки.
+ * apiClient.js — the only layer that knows about Google Apps Script.
+ * Other modules know nothing about the URL, the response format, or any errors.
  *
- * Усі запити йдуть методом POST, навіть читання. Причина конкретна:
- * токен у query string потрапляє в логи Google, в історію
- * браузера і в заголовок Referer. У тілі запиту він не видно нікому.
+ * All requests are sent via POST, even reads. The reason is specific:
+ * the token in the query string ends up in Google logs, browser history,
+ * and Referer headers. In the request body, it is invisible to everyone.
  *
- * Окремо про пароль: він не залишає браузер у жодному запиті.
- * Замість нього йде доказ `SHA-256(SHA-256(пароль) + час)` — значення,
- * прив'язане до миттєвого часу, яке сервер приймає лише один раз.
+ * Separately on the password: it never leaves the browser in any request.
+ * Instead, a proof `SHA-256(SHA-256(password) + time)` is sent — a value
+ * tied to the moment in time, which the server accepts only once.
+ *
  *
  */
 
 import { APPS_SCRIPT_ENDPOINT, REQUEST_TIMEOUT_MS } from "../config.js";
 
-/** Коди помилок, які бекенд повертає в тілі відповіді. */
+/** Error codes returned by the backend in the response body. */
 export const API_ERROR_CODE = {
   unauthorized: "UNAUTHORIZED",
-  // Токен підписаний правильно, але термін вичерпано. Єдина
-  // відмова, після якої достатньо увійти знову.
+  // Token signed correctly, but expired. The only
+  // failure where it is sufficient to log in again.
   sessionExpired: "SESSION_EXPIRED",
   rateLimited: "RATE_LIMITED",
   badRequest: "BAD_REQUEST",
@@ -34,51 +35,57 @@ export const API_ERROR_CODE = {
  */
 
 /**
- * Категорія разом із лімітом на місяць запиту.
+ * Category along with the limit for the requested month.
  *
  * @typedef {object} BudgetCategory
  * @property {string} name
  * @property {string} icon
  * @property {string} color
- * @property {string} isActive — «Так», «Ні» або порожньо (порожньо = так)
+ * @property {string} isActive — "Yes", "No" or empty (empty = yes)
  * @property {number} order
- * @property {number} limit — ліміт на `limitPeriod`, 0 коли не задано
+ * @property {number} limit — limit for limitPeriod, 0 if not set
+ *
+ *
  */
 
 /**
- * Ціль — накопичення або проект.
+ * Goal — accumulation or project.
  *
  * @typedef {object} Goal
  * @property {string} id
  * @property {string} name
- * @property {number} targetAmount — цільова сума (прихована в UI)
- * @property {number} currentAmount — поточна сума (прихована в UI)
- * @property {string} deadline — «2026-12-31» або «2026-12-31T00:00»
- * @property {string} beginDate — «2026-01-01» або «2026-01-01T00:00»
- * @property {string} type — «Savings» або «Project»
- * @property {boolean} active — чи відображати ціль у веб-інтерфейсі
- * @property {number} progress — відсоток виконання (0-100), рахується на сервері
- * @property {number} monthlyRequirement — скільки потрібно відкладати/витрачати щомісяця, рахується на сервері
+ * @property {number} targetAmount — target amount (hidden in UI)
+ * @property {number} currentAmount — current amount (hidden in UI)
+ * @property {string} deadline — "2026-12-31" or "2026-12-31T00:00"
+ * @property {string} beginDate — "2026-01-01" or "2026-01-01T00:00"
+ * @property {string} type — "Savings" or "Project"
+ * @property {boolean} active — whether to display the goal in the web interface
+ * @property {number} progress — completion percentage (0-100), calculated on the server
+ * @property {number} monthlyRequirement — how much needs to be saved/spent monthly, calculated on the server
+ *
+ *
  */
 
 /**
- * Одна операція. `pending` немає в знімку — це клієнтська копія,
- * ще в черзі відправлення.
+ * A single transaction. pending is not in the snapshot — it is a client copy
+ * still in the transmission queue.
  *
  * @typedef {object} Transaction
  * @property {string} id
- * @property {string} occurredOn — «2026-10-17» або «2026-10-17T09:15»
+ * @property {string} occurredOn — "2026-10-17" or "2026-10-17T09:15"
  * @property {string} category
  * @property {number} amount
  * @property {string} user
  * @property {string} note
- * @property {string} recordedAt — ISO з часом у UTC
+ * @property {string} recordedAt — ISO with time in UTC
  * @property {boolean} [pending]
+ *
+ *
  */
 
 /**
- * Знімок бюджету. `periods` — ті місяці, які сервер реально
- * прочитав: клієнт замінює ними свої, решту не чіпає.
+ * Budget snapshot. periods — the months the server actually
+ * read: the client replaces its own with them, leaves others alone.
  *
  * @typedef {object} BudgetSnapshot
  * @property {string} serverTime
@@ -87,25 +94,28 @@ export const API_ERROR_CODE = {
  * @property {Array<string>} periods
  * @property {Array<Transaction>} transactions
  * @property {Array<Goal>} goals
+ *
+ *
  */
 
-/** Коди, за якими треба показати екран входу.
+/** Codes that require showing the login screen.
  *
- * SESSION_EXPIRED — тимчасово: ввійдете знову й черга дійде.
- * UNAUTHORIZED — назавжди або до дії адміністратора: повторний
- * вхід не допоможе, тому черга викидається (див. budgetStore).
+ * SESSION_EXPIRED — temporary: log in again and the queue will proceed.
+ * UNAUTHORIZED — permanent or until admin action: re-login
+ * won't help, so the queue is discarded (see budgetStore).
  *
  * @property {number[]} AUTH_FAILURE_CODES
+ *
  */
 export const AUTH_FAILURE_CODES = [
   API_ERROR_CODE.unauthorized,
   API_ERROR_CODE.sessionExpired,
 ];
 
-/** Помилка, зрозуміла до верхнього шару: має стабільний код і людське повідомлення. */
+/** Error, understandable by the top layer: has a stable code and human message. */
 export class ApiError extends Error {
   /**
-   * @param {string} message — що показати людині (з сервера: displayError)
+   * @param {string} message — what to show the user (from server: displayError)
    * @param {string} code
    * @param {{ retryAfterSeconds?: number, serverTime?: number, technicalMessage?: string }} [details]
    */
@@ -116,19 +126,19 @@ export class ApiError extends Error {
     this.details = details;
   }
 
-  /** @returns {number | null} скільки секунд ще не можна пробувати */
+  /** @returns {number | null} how many seconds more one cannot try */
   getRetryAfterSeconds() {
     return this.details.retryAfterSeconds ?? null;
   }
 }
 
 /**
- * Виконує запит до Apps Script із таймаутом і приведенням помилок
- * до єдиного типу ApiError.
+ * Executes a request to Apps Script with a timeout and normalization of
+ * errors into a single ApiError type.
  *
- * **Повертає різні форми залежно від `action`**, тому одного типу
- * тут не буде — нижче перелічені всі. Нащадки замість нього
- * мають конкретний `@returns`.
+ * **Returns different forms depending on `action`**, so there is no
+ * single type here — all are listed below. Subordinates instead of it
+ * have a specific `@returns`.
  *
  * ```
  * authenticate         → { ok, token, expiresAt, serverTime }
@@ -141,10 +151,11 @@ export class ApiError extends Error {
  * adjustGoal            → { ok, goal, snapshot }
  * ```
  *
- * Помилка ніколи не повертається — вона кидається як `ApiError`.
+ * An error never returns — it is thrown as `ApiError`.
  *
  * @param {{ action: string, sessionToken?: string, [key: string]: unknown }} command
- * @returns {Promise<object>} див. перелік форм вище
+ * @returns {Promise<object>} see the list of forms above
+ *
  */
 async function sendCommand({ action, sessionToken, ...payload }) {
   const abortController = new AbortController();
@@ -153,8 +164,8 @@ async function sendCommand({ action, sessionToken, ...payload }) {
   try {
     const response = await fetch(APPS_SCRIPT_ENDPOINT, {
       method: "POST",
-      // text/plain обязателен: з application/json Apps Script відповідає
-      // CORS-редиректом, який браузер блокує.
+      // text/plain is mandatory: with application/json, Apps Script responds
+      // with a CORS redirect, which the browser blocks.
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
         action,
@@ -177,9 +188,9 @@ async function sendCommand({ action, sessionToken, ...payload }) {
     }
 
     if (parsedBody.ok === false) {
-      // Сервер надсилає два тексти: error - для журналу,
-      // displayError - для сторінки. На екрані показуємо другий,
-      // перший лишається в консолі, щоб не загубити деталі.
+      // Server sends two texts: error - for logs,
+      // displayError - for the page. We show the second on screen,
+      // the first remains in the console so that details are not lost.
       const technicalMessage = parsedBody.error ?? "Невідома помилка сервера";
       const displayMessage = parsedBody.displayError ?? technicalMessage;
 
@@ -205,9 +216,10 @@ async function sendCommand({ action, sessionToken, ...payload }) {
 }
 
 /**
- * Перетворює низькорівлеву помилку браузера на ApiError.
+ * Converts a low-level browser error into ApiError.
  * @param {unknown} error
  * @returns {ApiError}
+ *
  */
 function normalizeTransportError(error) {
   if (error instanceof ApiError) return error;
@@ -230,106 +242,117 @@ function normalizeTransportError(error) {
 }
 
 /**
- * Обмін логіну й пароля на сесійний токен.
+ * Exchange of login and password for a session token.
  *
  * @param {{ login: string, proof: string, timestamp: number }} credentials
  * @returns {Promise<{ token: string, expiresAt: number, serverTime: number }>}
+ *
  */
 export function openSession({ login, proof, timestamp }) {
   return sendCommand({ action: "authenticate", login, proof, timestamp });
 }
 
 /**
- * Надсилає заявку на створення користувача.
+ * Sends a request to create a user.
  *
- * Єдиний запит без сесії — інакше завести акаунт не мав би
- * сенсу нікому. Обмеження на кількість заявок тримає сервер.
+ * The only request without a session — otherwise creating an account would
+ * make no sense for anyone. Request count limits are maintained by the server.
  *
  * @param {string} login
- * @param {string} passwordHash — SHA-256 пароля, порахований у браузері
- * @returns {Promise<{ login: string, isActive: false }>} заявка створена,
- * але акаунт ще не активний — його вмикає адміністратор у таблиці
+ * @param {string} passwordHash — SHA-256 of the password, calculated in the browser
+ * @returns {Promise<{ login: string, isActive: false }>} request created,
+ * but the account is not yet active — it's enabled by an administrator in the table
+ *
+ *
  */
 export function requestUserRegistration(login, passwordHash) {
   return sendCommand({ action: "requestRegistration", login, passwordHash });
 }
 
 /**
- * Завантажує знімок бюджету разом із тим, хто увійшов.
+ * Loads the budget snapshot along with the logged-in user.
  *
- * `periods` — місяці з операціями, які клієнт уже тримає в пам'яті.
- * Сервер поверне тільки їх: так знімок на два десятки кілобайт не
- * виростає до мегабайтів, а завантажені місяці не перезапитуються.
+ * `periods` — months with transactions that the client already keeps in memory.
+ * The server will return only them: this way a 20KB snapshot doesn't
+ * grow to megabytes, and loaded months are not re-requested.
  *
- * `limitPeriod` — окремо, і це не випадковість. Операції потрібні
- * за два місяці (відкритий і попередній — для порівняння), а ліміти
- * мають бути лише для відкритого. Інакше жовтневий ліміт показувався
- * б і в вересні, де його не задавали.
+ * `limitPeriod` — separately, and it's not a coincidence. Transactions are
+ * needed for two months (open and previous — for comparison), and limits
+ * should be only for the open one. Otherwise, the October limit would be
+ * shown in September as well, where it wasn't set.
  *
  * @param {string} sessionToken
  * @param {Array<string>} periods
  * @param {string} limitPeriod
- * @returns {Promise<BudgetSnapshot>} `periods` у відповіді — ті місяці,
- * які сервер прочитав насправді
+ * @returns {Promise<BudgetSnapshot>} `periods` in the response — those months
+* the server actually read
+*
+*
  */
 export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
   return sendCommand({ action: "loadSnapshot", sessionToken, periods, limitPeriod });
 }
 
 /**
- * Додає одну операцію до таблиці. Хто витратив — визначає сервер
- * із токена, клієнт це поле не передає.
- *
- * @param {string} sessionToken
- * @param {object} transactionPayload
- * @param {Array<string>} periods
- * @param {string} limitPeriod
- * @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
- * справжній запис із сервера (з його `id`) і оновлені дані — саме
- * за ними запис прибирається з черги, а не за `id` черги
+ * Adds a single transaction to the table. Who spent - is determined by the server
+* from the token, the client does not pass this field.
+*
+* @param {string} sessionToken
+* @param {object} transactionPayload
+* @param {Array<string>} periods
+* @param {string} limitPeriod
+* @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
+* the actual record from the server (with its `id`) and updated data — it is
+* by them that the record is removed from the queue, not by the queue's `id`
+*
+*
  */
 export function submitTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
 }
 
 /**
- * Видаляє операцію за її стійким ідентифікатором.
+ * Deletes a transaction by its stable identifier.
  *
  * @param {string} sessionToken
  * @param {string} transactionId
  * @param {Array<string>} periods
  * @param {string} limitPeriod
  * @returns {Promise<{ deletedId: string, snapshot: BudgetSnapshot }>}
+ *
+ *
  */
 export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
   return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
 }
 
 /**
- * Переписує наявну операцію на місці.
+ * Overwrites an existing transaction in place.
  *
- * `transaction` мусить містити `id` — за ним сервер знаходить рядок.
- * «Хто» і «Записано» сервер бере зі своїх даних, а не з цього
- * payload: підробити автора зміни неможливо, а час останнього
- * запису про рядок сервер проставляє сам.
+ * `transaction` must contain `id` — the server finds the row by it.
+ * "Who" and "Recorded" are taken by the server from its own data, not from this
+* payload: forging the author of the change is impossible, and the time of the last
+* record is set by the server itself.
  *
  * @param {string} sessionToken
- * @param {object} transactionPayload
- * @param {Array<string>} periods
- * @param {string} limitPeriod
- * @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
- * віддає те, що реально лишилося в рядку, а не ехо з payload.
+* @param {object} transactionPayload
+* @param {Array<string>} periods
+* @param {string} limitPeriod
+* @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
+* returns what actually remains in the row, not an echo from the payload.
+*
+*
  */
 export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
 }
 
-/** Завантажує список активних цілей користувача. */
+/** Loads the list of active user goals. */
 export function fetchGoals(sessionToken) {
   return sendCommand({ action: "fetchGoals", sessionToken });
 }
 
-/** Коригує поточну суму цілі. Змінює лише currentAmount (currentAmount + amount). Повертає { id, progress, monthlyRequirement }. */
+/** Adjusts the current amount of a goal. Changes only `currentAmount` (`currentAmount` + `amount`). Returns { id, progress, monthlyRequirement }. */
 export function adjustGoal(sessionToken, goalId, amount) {
   return sendCommand({ action: "adjustGoal", sessionToken, id: goalId, amount });
 }

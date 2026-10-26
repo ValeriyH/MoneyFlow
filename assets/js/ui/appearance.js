@@ -1,103 +1,121 @@
 /**
- * appearance.js — вигляд застосунку: світлий або темний.
+ * appearance.js — theme management: light or dark.
  *
- * Вибір живе в localStorage (moneyflow.ui-style), а застосовується
- * атрибутом data-style на <html>: браузер просто перечитує каскадні
- * правила, тож перемикання не перемальовує DOM і нічого не чекає.
+ * The choice is stored in localStorage (moneyflow.ui-style) and applied
+ * via the data-style attribute on <html>: the browser simply re-reads
+ * the cascade rules, so switching doesn't repaint the DOM or wait.
  *
- * Ставимо атрибут двома способами навмисно: інлайн-скриптом у
- * <head> — щоб не було спалаху світлим на темній темі — і звідси,
- * щоб працювати після першого малювання.
+ * We set the attribute in two ways intentionally: an inline script in
+ * <head> — to prevent a flash of light theme on a dark theme — and from
+ * here, to ensure it works after the first render.
  *
- * Модуль не має кнопки: перемикачем є пункт меню, а хто саме
- * показує йому поточне значення, вирішує main.js.
+ * This module doesn't have a button: the toggle is in the menu, and
+ * who shows it the current value is decided by main.js.
+ *
+ *
  */
-
+ 
 import { UI_STYLE_CLASSIC, UI_STYLE_SOLID } from "../config.js";
 import { saveUiStyle } from "../core/localStore.js";
-
+ 
 /**
- * Підписи для меню. Людина має бачити різницю («світла», «темна»),
- * а не внутрішні імена вигляду: «solid» їй ніщо не каже.
+ * Labels for the menu. A person must see the difference ("light", "dark"),
+ * not internal style names: "solid" tells them nothing.
+ *
+ *
  */
 const STYLE_LABELS = {
   [UI_STYLE_CLASSIC]: "Світла",
   [UI_STYLE_SOLID]: "Темна",
 };
-
+ 
 /**
- * Колір панелей браузера — верхньої адресної смужки й нижньої
- * навігаційної. Браузер бере його з метатега, а не з CSS, тому
- * статичне значення в темній темі лишає ці смужки білими.
+ * Browser panel colors — the top address bar and bottom navigation bar.
+ * The browser takes these from the meta tag, not from CSS, so a
+ * static value in a dark theme would leave these bars white.
  *
- * Значення мусять збігатися з `--color-canvas` кожного вигляду:
- * світлий `#f1f4f8`, темний `#0d1014`.
+ * Values must match the --color-canvas of each style:
+ * light #f1f4f8, dark #0d1014.
+ *
+ *
  */
 const THEME_COLOR_CLASSIC = "#f1f4f8";
 const THEME_COLOR_SOLID = "#0d1014";
-
+ 
 /**
- * Чи ввімкнено темний вигляд.
+ * Is dark style selected?
  *
  * @returns {boolean}
+ *
+ *
  */
 function isDarkSelected() {
   return document.documentElement.getAttribute("data-style") === UI_STYLE_SOLID;
 }
-
+ 
 /**
- * Ставить колір панелей браузера.
+ * Sets the browser panel color.
  *
  * @param {string} styleName
  * @returns {void}
+ *
+ *
  */
 function applyThemeColor(styleName) {
   const metaElement = document.querySelector('meta[name="theme-color"]');
   if (!metaElement) return;
-
+ 
   metaElement.setAttribute(
     "content",
     styleName === UI_STYLE_SOLID ? THEME_COLOR_SOLID : THEME_COLOR_CLASSIC,
   );
 }
-
+ 
 /**
- * Перемикає тему й запам'ятовує вибір.
+ * Switches the theme and saves the choice.
  *
  * @returns {void}
+ *
+ *
  */
 export function toggleAppearance() {
   const nextStyleName = isDarkSelected() ? UI_STYLE_CLASSIC : UI_STYLE_SOLID;
-
+ 
   applyStyle(nextStyleName);
   saveUiStyle(nextStyleName);
 }
-
+ 
 /**
- * Яка тема зараз — для меню.
+ * Current theme — for the menu.
  *
  * @returns {string}
+ *
+ *
  */
 export function describeAppearance() {
   return isDarkSelected() ? STYLE_LABELS[UI_STYLE_SOLID] : STYLE_LABELS[UI_STYLE_CLASSIC];
 }
-
+ 
 /**
- * Вирівнює колір панелей браузера з виглядом.
+ * Aligns the browser panel color with the style.
  *
- * Потрібне окремо від перемикання: мітка в <head> могла не
- * спрацювати (приватний режим, пошкоджене значення в сховищі), і
- * тоді браузер показав би світлі смужки у темному вигляді.
+ * This is needed separately from the toggle: the tag in <head> might
+ * not have worked (private mode, corrupted value in storage), and
+ * then the browser would show light bars in a dark theme.
  *
  * @returns {void}
+ *
+ *
  */
 export function syncThemeColor() {
   applyThemeColor(isDarkSelected() ? UI_STYLE_SOLID : UI_STYLE_CLASSIC);
 }
-
+ 
 /**
  * @param {string} styleName
  * @returns {void}
+ *
+ *
  */
 function applyStyle(styleName) {
   if (styleName === UI_STYLE_SOLID) {
@@ -105,6 +123,6 @@ function applyStyle(styleName) {
   } else {
     document.documentElement.removeAttribute("data-style");
   }
-
+ 
   applyThemeColor(styleName);
 }

@@ -1,16 +1,16 @@
 /**
- * accessGate.js — екран входу за логіном і паролем.
+ * accessGate.js — login screen.
  *
- * Пароль не залишає браузер: він перетворюється на хеш ще до
- * запиту (див. domain/crypto.js), а браузер зберігає лише підписаний
- * сервером токен сесії. Тому публічна адреса Apps Script сама по
- * собі нічого не дає — треба ще й пароль.
- */
+ * The password is not stored in the browser: it is converted into a hash
+ * before the request (see domain/crypto.js), and the browser only stores
+ * a server-signed session token. Thus, a public Apps Script address
+ * alone is not enough — a password is also required.
+ * */
 
 import { ApiError, API_ERROR_CODE } from "../core/apiClient.js";
 import { findById, on, setVisibility } from "./dom.js";
 
-/** Як часто оновлювати зворотний відлік, мс. */
+/** Frequency of countdown refresh, in ms. */
 const COUNTDOWN_TICK_MS = 1000;
 
 /**
@@ -30,7 +30,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
 
   const registrationFormElement = findById("registrationForm");
 
-  /** Таймер зворотного відліку, доки сервер тримає вхід заблокованим. */
+  /** Countdown timer until the server unlocks the login. */
   let countdownTimerHandle = null;
 
   /** @param {boolean} isUnlocked */
@@ -52,14 +52,14 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
     setVisibility(gateErrorElement, true);
   }
 
-  /** Ховає лічильник і знову дозволяє надсилати форму. */
+  /** Hides the counter and allows form submission again. */
   function clearError() {
     setVisibility(gateErrorElement, false);
     stopCountdown();
   }
 
   /**
-   * Блокує кнопку й показує, скільки лишилося чекати.
+   * Blocks the button and shows the remaining wait time.
    * @param {number} totalSeconds
    */
   function startCountdown(totalSeconds) {
@@ -124,9 +124,9 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
     } catch (error) {
       handleUnlockError(error);
     } finally {
-      // Кнопку не відновлюємо тут навмисно: коли сервер щойно
-      // заблокував вхід, форма має лишатися заблокованою.
-      // У всіх інших випадках її розблокує handleUnlockError.
+      // Do not restore the button here intentionally: when the server
+      // just blocked the entry, the form should remain blocked.
+      // In all other cases, it will be unlocked by handleUnlockError.
       gateSubmitButtonElement.textContent = "Увійти";
     }
   });
@@ -139,8 +139,8 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
       return;
     }
 
-    // Блокування діє лише у разі rateLimited; в інших випадках
-    // форма має лишатися придатною для наступної спроби.
+    // Blocking applies only in the case of rateLimited; in other cases
+    // the form should remain usable for the next attempt.
     stopCountdown();
 
     if (error instanceof ApiError && error.code === API_ERROR_CODE.unauthorized) {
@@ -154,7 +154,7 @@ export function initAccessGate({ onUnlock, onUnlockFailed }) {
     showError(error instanceof Error ? error.message : "Не вдалося увійти. Спробуйте ще раз.");
   }
 
-  /** Показує gate знову, коли чергова синхронізація впала з unauthorized. */
+  /** Shows gate again when the recent sync failed with unauthorized. */
   function revealAgain(message) {
     clearError();
     showError(message);

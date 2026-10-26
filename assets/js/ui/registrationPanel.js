@@ -1,10 +1,12 @@
 /**
- * registrationPanel.js — форма самостійної реєстрації.
+ * registrationPanel.js — self-registration form.
  *
- * Живе на екрані входу поруч із формою входу. Людина обирає логін
- * та пароль, і вони потрапляють у таблицю як неактивний рядок.
- * Увійти можна буде лише після того, як власник таблиці увімкне
- * цей рядок у колонці «Активний».
+ * Lives on the login screen next to the login form. A person chooses a login
+ * and password, and they are entered into the table as an inactive row.
+ * Login will be possible only after the table owner enables
+ * this row in the "Active" column.
+ *
+ *
  */
 
 import { MIN_PASSWORD_LENGTH } from "../config.js";
@@ -13,9 +15,11 @@ import { hashPassword } from "../domain/crypto.js";
 import { findById, on, setVisibility } from "./dom.js";
 
 /**
- * Ті самі вимоги, що й на сервері: клієнт показує їх раніше,
- * щоб не витрачати запит на очевидно слабкий пароль.
- * Має збігатися з requireStrongPassword в apps-script/auth.gs.
+ * The same requirements as on the server: the client shows them earlier
+ * so as not to waste a request on an obviously weak password.
+ * Must match `requireStrongPassword` in apps-script/auth.gs.
+ *
+ *
  */
 const PASSWORD_RULES = [
   { key: "length", isMet: (value) => value.length >= MIN_PASSWORD_LENGTH },
@@ -23,7 +27,7 @@ const PASSWORD_RULES = [
   { key: "digit", isMet: (value) => /\d/.test(value) },
 ];
 
-/** @returns {void} підписується на стан сам і нікого не повертає */
+/** @returns {void} subscribed to state itself and returns nothing */
 export function initRegistrationPanel() {
   const loginFormElement = findById("accessGateForm");
   const registrationFormElement = findById("registrationForm");
@@ -49,7 +53,7 @@ export function initRegistrationPanel() {
 
   renderPasswordRequirements();
 
-  /** Перемикання між двома формами живе тут: вони сусідні. */
+  /** Switching between two forms lives here: they are adjacent. */
   function showLoginForm() {
     setVisibility(registrationFormElement, false);
     setVisibility(loginFormElement, true);
@@ -89,8 +93,8 @@ export function initRegistrationPanel() {
     submitButtonElement.textContent = "Створюємо…";
 
     try {
-      // На сервер іде хеш, а не сам пароль: так правило
-      // «пароль не залишає браузера» діє і для реєстрації.
+      // Hash is sent to the server, not the password: so the rule
+      // "password doesn't leave the browser" also applies to registration.
       await requestUserRegistration(newLogin, await hashPassword(password));
 
       registrationFormElement.reset();
@@ -110,6 +114,7 @@ export function initRegistrationPanel() {
   /**
    * @param {string} ruleKey
    * @returns {string}
+   *
    */
   function describeUnmetRule(ruleKey) {
     const messagesByRule = {
@@ -137,6 +142,7 @@ export function initRegistrationPanel() {
   /**
    * @param {unknown} error
    * @returns {string}
+   *
    */
   function describeRegistrationError(error) {
     if (

@@ -1,9 +1,11 @@
 /**
- * statistics.js — агрегація операцій за місяць.
- * Чисті функції без побічних ефектів: на вход масив операцій,
- * на виході готовий опис для відтворення в UI.
+ * statistics.js — aggregation of operations by month.
+ * Pure functions without side effects: array of operations as input,
+ * ready description for UI rendering as output.
+ *
+ *
  */
-
+ 
 import {
   daysInPeriod,
   elapsedDaysInPeriod,
@@ -11,12 +13,14 @@ import {
   remainingDaysInPeriod,
   shiftPeriodKey,
 } from "./period.js";
-
+ 
 /**
- * Відбирає операції, що належать заданому місяцю.
+ * Filters operations belonging to the given month.
  * @param {Array<object>} transactions
- * @param {string} periodKey — «2026-10»
+ * @param {string} periodKey — "2026-10"
  * @returns {Array<object>}
+ *
+ *
  */
 export function filterTransactionsByPeriod(transactions, periodKey) {
   return transactions.filter(
@@ -24,35 +28,39 @@ export function filterTransactionsByPeriod(transactions, periodKey) {
       transaction.occurredOn.startsWith(periodKey),
   );
 }
-
+ 
 /**
- * Сума операцій.
+ * Sum of operations.
  * @param {Array<object>} transactions
  * @returns {number}
+ *
+ *
  */
 function totalAmount(transactions) {
   return transactions.reduce((runningTotal, transaction) => runningTotal + transaction.amount, 0);
 }
-
+ 
 /**
- * Загальний бюджет на місяць: сума лімітів усіх категорій.
+ * Total budget for the month: sum of limits of all categories.
  *
- * Ліміти приходять із сервера вже відфільтрованими за місяцем,
- * тому сума береться проста. Категорії без ліміта в бюджет не
- * входять, але лишаються доступними для введення витрат.
+ * Limits come from the server already filtered by month,
+ * so the sum is simple. Categories without limits are not
+ * part of the budget, but remain available for expense entry.
  *
  * @param {Array<object>} categories
  * @returns {number}
+ *
+ *
  */
 export function totalBudgetForPeriod(categories) {
   return categories.reduce((runningTotal, category) => runningTotal + (category.limit ?? 0), 0);
 }
-
+ 
 /**
- * Повний звіт за місяць: залишок, структура витрат, прогноз, динаміка.
+ * Full report for the month: balance, spending structure, projection, dynamics.
  *
- * @param {Array<object>} allTransactions — усі операції бюджету
- * @param {Array<object>} categories — каталог для іконок, кольорів і лімітів
+ * @param {Array<object>} allTransactions — all budget operations
+ * @param {Array<object>} categories — catalog for icons, colors, and limits
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {{
@@ -66,18 +74,20 @@ export function totalBudgetForPeriod(categories) {
  *   previousPeriodExpenseTotal: number,
  *   categoryBreakdown: Array<object>,
  * }}
+ *
+ *
  */
 export function buildPeriodSummary(allTransactions, categories, periodKey, referenceDate = new Date()) {
   const periodTransactions = filterTransactionsByPeriod(allTransactions, periodKey);
-
+ 
   const expenseTotal = totalAmount(periodTransactions);
   const budgetTotal = totalBudgetForPeriod(categories);
-
+ 
   const elapsedDays = Math.max(elapsedDaysInPeriod(periodKey, referenceDate), 1);
   const previousPeriodTotal = totalAmount(
     filterTransactionsByPeriod(allTransactions, shiftPeriodKey(periodKey, -1)),
   );
-
+ 
   return {
     periodKey,
     expenseTotal,
@@ -93,24 +103,26 @@ export function buildPeriodSummary(allTransactions, categories, periodKey, refer
     categoryBreakdown: buildCategoryBreakdown(periodTransactions, categories, expenseTotal),
   };
 }
-
+ 
 /**
- * Розподіл витрат по категоріях, відсортований від більшого до меншого.
+ * Breakdown of spending by category, sorted from largest to smallest.
  *
- * Категорія, якої вже немає в каталозі, не зникає з історії:
- * вона показується нейтральною крапкою. Тому старі записи лишаються
- * читабельними, навіть якщо категорію прибрали з таблиці.
+ * Category missing from the catalog doesn't disappear from history:
+ * it's shown as a neutral dot. Thus old records remain
+ * readable, even if the category was removed from the table.
  *
  * @param {Array<object>} expenseTransactions
- * @param {Array<object>} categories
- * @param {number} expenseTotal — для розрахунку часток
- * @returns {Array<{ name: string, icon: string, color: string, total: number, share: number }>}
+ * * @param {Array<object>} categories
+ * * @param {number} expenseTotal — for share calculation
+ * * @returns {Array<{ name: string, icon: string, color: string, total: number, share: number }>}
+ * *
+ *
  */
 export function buildCategoryBreakdown(expenseTransactions, categories, expenseTotal) {
   const categoryMetaByName = new Map(
     categories.map((category) => [category.name, category]),
   );
-
+ 
   const totalByCategoryName = new Map();
   for (const transaction of expenseTransactions) {
     totalByCategoryName.set(
@@ -118,11 +130,11 @@ export function buildCategoryBreakdown(expenseTransactions, categories, expenseT
       (totalByCategoryName.get(transaction.category) ?? 0) + transaction.amount,
     );
   }
-
+ 
   return [...totalByCategoryName.entries()]
     .map(([categoryName, categoryTotal]) => {
       const categoryMeta = categoryMetaByName.get(categoryName);
-
+ 
       return {
         name: categoryName,
         icon: categoryMeta?.icon ?? "•",
@@ -133,22 +145,24 @@ export function buildCategoryBreakdown(expenseTransactions, categories, expenseT
     })
     .sort((left, right) => right.total - left.total);
 }
-
+ 
 /**
- * Операції для списку: за датою витрати, новіші спершу.
+ * Operations for the list: by expense date, newer first.
  *
- * Головний ключ — `occurredOn`, а не час внесення: витрати
- * мають групуватися по днях, інакше «що я витратив вчора»
- * розсипається між тим, що внесено сьогодні за вчора, і тим,
- * що внесено вчора за вчора.
+ * The main key is `occurredOn`, not the submission time: expenses
+ * must be grouped by days, otherwise "what I spent yesterday"
+ * would be scattered between what was entered today for yesterday, and what
+* was entered yesterday for yesterday.
  *
- * `recordedAt` лишається запасним: він розводить записи, внесені
- * протягом хвилини, і дає порядок для старих рядків без часу,
- * де дата зовсім однакова.
+ * `recordedAt` remains as a backup: it breaks down records
+ * submitted within one minute, and gives order for old records without
+ * time, where the date is exactly the same.
  *
  * @param {Array<object>} transactions
  * @param {number} pageSize
  * @returns {Array<object>}
+ *
+ *
  */
 export function takeRecentTransactions(transactions, pageSize) {
   return [...transactions]
@@ -159,21 +173,23 @@ export function takeRecentTransactions(transactions, pageSize) {
     )
     .slice(0, pageSize);
 }
-
+ 
 /**
- * Ключ сортування за датою витрати, з нормалізованим часом.
+ * Sorting key by expense date, with normalized time.
  *
- * Час доповнюється не просто так: «2026-10-16» коротший за
- * «2026-10-16T08:00», тож без доповнення записи одного дня
- * розсипалися б — спершу ті, що з часом, потім ті, що без.
- * `T00:00` ставить усіх на одне місце, і день лишається цілим.
+ * Time is appended not just so: "2026-10-16" is shorter than
+ * "2026-10-16T08:00", so without addition records of the same day
+ * would be scattered — first those with time, then those without.
+ * `T00:00` puts everyone in the same place, and the day remains whole.
  *
- * Порожня дата лишається порожньою, а не перетворюється на
- * `T00:00`: запис без дати мусить опинятися в кінці, а не
- * на початку.
+ * Empty date remains empty, not converted into
+ * `T00:00`: a record without date must end up at the end, not
+ * at the beginning.
  *
  * @param {object} transaction
  * @returns {string}
+ *
+ *
  */
 function expenseTimeKey(transaction) {
   const occurredOn = transaction?.occurredOn ?? "";

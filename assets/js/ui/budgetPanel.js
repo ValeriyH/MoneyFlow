@@ -1,7 +1,7 @@
 /**
- * budgetPanel.js — список лімітів по категоріях із прогрес-барами.
- * Показує не «відсоток виконання», а живі цифри: скільки витрачено,
- * скільки лишилось і скільки можна витрачати на день.
+ * budgetPanel.js — a list of category limits with progress bars.
+ * Shows actual numbers: how much spent,
+ * how much is left, and how much is allowed per day.
  */
 
 import { formatCurrency, formatPercentage } from "../domain/formatters.js";
@@ -30,9 +30,9 @@ export function initBudgetPanel() {
     clearChildren(budgetListElement);
     setVisibility(budgetEmptyMessageElement, budgetReport.length === 0);
 
-    // Бейдж скидаємо ЗАВЖДИ, до раннього виходу. Інакше на місяці без
-    // бюджету він показував би «Загалом …» із попереднього місяця —
-    // цифра, якої на екрані не відповідає ніщо.
+    // Reset the badge ALWAYS, before early exit. Otherwise on a month without
+    // a budget, it would show "Total…" from the previous month —
+    // a number that matches nothing on the screen.
     budgetBadgeElement.textContent =
       budgetReport.length === 0 ? "—" : buildBadgeText(budgetReport);
 

@@ -1,13 +1,14 @@
 /**
- * budgetStore.js — єдине джерело правди на клієнті.
+ * budgetStore.js — the single source of truth on the client.
  *
- * Тримає поточний знімок бюджету, чергу несинхронізованих записів
- * і стан синхронізації. UI підписується на зміни й перемальовується.
- * Ніякий UI-модуль не знає, як влаштована мережа чи localStorage.
+ * Holds the current budget snapshot, a queue of unsynchronized records,
+ * and the synchronization state. The UI subscribes to changes and re-renders.
+ * No UI module knows how the network or localStorage is implemented.
  *
- * Ключова ідея: будь-яка дія сперша потрапляє в чергу й одразу
- * показується в UI, і лише потім відправляється на сервер. Тому
- * інтерфейс не чекає 3 секунди, а черга гарантує доставку.
+ * Core idea: any action first enters a queue and is immediately shown in the UI,
+ * and only then is it sent to the server. Thus, the interface doesn't wait
+ * for 3 seconds, and the queue guarantees delivery.
+ *
  *
  */
 
@@ -32,13 +33,14 @@ import {
 } from "./localStore.js";
 import { currentPeriodKey, shiftPeriodKey } from "../domain/period.js";
 
-/** Гість — стан до того, як користувач увійшов. */
+/** Guest — state before the user logged in. */
 const ANONYMOUS_VIEWER = { name: "", color: "#8b95a8" };
 
 /**
- * Помилки, з яких є сенс повторювати запит. Решта — відмова сервера
- * «назавжди»: категорія не існує, сесія прострочена. Такі
- * записи треба викидати, інакше вони вічно блокуватимуть решту черги.
+ * Errors from which it makes sense to retry the request. The others
+ * are server rejections "forever": category doesn't exist, session expired.
+ * Such records must be discarded, otherwise they will block the rest of the queue.
+ *
  *
  */
 const RETRYABLE_ERROR_CODES = [
@@ -49,13 +51,13 @@ const RETRYABLE_ERROR_CODES = [
 ];
 
 /**
- * Скільки місяців тримаємо в пам'яті одночасно.
+ * How many months to keep in memory simultaneously.
  *
- * Це запобіжник, а не план: зазвичай у пам'яті один-два місяці.
- * Рости починається лише тоді, коли хтось перемикається назад по
- * роках. Без межі список місяців перевищив би ліміт сервера, і
- * тоді перестав би працювати сам додаток — будь-який запис
- * падав би з помилкою.
+ * This is a safety net, not a plan: usually one or two months are in memory.
+ * Growth starts only when someone switches back to older months.
+ * Without a limit, the list of months would exceed the server's limit,
+ * and then the app stop working — any request would fail with an error.
+ *
  *
  */
 const MAX_LOADED_PERIODS = 12;
@@ -66,16 +68,17 @@ function isWorthRetrying(error) {
 }
 
 /**
- * Термін сесії вичерпано: токен підписаний правильно, усі дані
- * в ньому чесні, просто пройшов час.
+ * Session expired: token signed correctly, all data in it is valid,
+ * just time has passed.
  *
- * Це єдина відмова, після якої достатньо увійти знову: записи
- * лишаються в черзі й доходять після того, як ви знову ввійдете.
- * Решта відмов (акаунт вимкнено, пароль змінено, токен підроблено)
- * сюди не потрапляють: повторний вхід їх не виправить, і запис
- * блокував би решту черги вічно.
+ * This is the only rejection after which it is sufficient to log in again:
+ * records remain in the queue and will arrive after you log in again.
+ * Other rejections (account disabled, password changed, token forged)
+ * don't fall here: re-login won't fix them, and the record
+ * would block the rest of the queue forever.
  *
  * @param {unknown} error
+ *
  */
 function isSessionExpired(error) {
   return error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired;
@@ -83,21 +86,24 @@ function isSessionExpired(error) {
 
 /**
  * @param {object} transaction
- * @returns {string} ключ місяця операції, «2026-10»
+ * @returns {string} month key of the operation, "2026-10"
+ *
  */
 function periodKeyOf(transaction) {
   return String(transaction?.occurredOn ?? "").slice(0, 7);
 }
 
 /**
- * Які саме місяці прийшли в знімку.
+ * Which months came in the snapshot.
  *
- * Новий сервер називає їх сам — це точніше за будь-який вивід із
- * дат, бо місяць без операцій інакше виглядав би як «не завантажено».
- * Старший сервер цього поля не має, тоді беремо місяці з дат.
+ * The new server names them itself — it's more accurate than any derive
+ * from dates, because a month without transactions would otherwise look
+* like "not loaded". The older server doesn't have this field, then we
+* take months from dates.
  *
  * @param {object} snapshot
  * @returns {Array<string>}
+ *
  */
 function readCoveredPeriods(snapshot) {
   if (Array.isArray(snapshot.periods) && snapshot.periods.length > 0) return snapshot.periods;
@@ -105,35 +111,38 @@ function readCoveredPeriods(snapshot) {
 }
 
 /**
- * Місяць, який дивимось, і попередній до нього.
+ * The month we are looking at, and the one preceding it.
  *
- * Попередній потрібен не тільки для показника «у порівнянні з
- * минулим», а й для розподілу та лімітів. Тому це не два незалежні
- * запити, а завжди пара: показати місяць без попереднього означає
- * показати половину панелі й мовчки відсутнє порівняння.
+ * The previous one is needed not only for the "compared to last month"
+* indicator, but also for distribution and limits. That's why it's not
+* two independent requests, but always a pair: showing a month without
+* its predecessor means showing half the panel and missing the comparison.
  *
- * @param {string} periodKey — «2026-10»
+ * @param {string} periodKey — "2026-10"
  * @returns {Array<string>} `['2026-10', '2026-09']`
+ *
  */
 function withPreviousPeriod(periodKey) {
   return [periodKey, shiftPeriodKey(periodKey, -1)];
 }
 
 /**
- * Лишаємо не більше ніж `limit` місяців.
+ * Keep no more than `limit` months.
  *
- * Обов'язково втримуємо `mustKeep` — інакше панелі могли б назавжди
- * залишитися на «Завантаження місяця…»: запит приніс би потрібний
- * місяць і тут же викинув його за межу, бо в пам'яті вже дванадцять
- * новіших. Решту добираємо найновішими — на них дивляться чаще.
+ * It's mandatory to keep `mustKeep` — otherwise the panels could forever
+* stay on "Loading month...": the request would bring the required month
+* and then immediately kick it out because there were already twelve
+* newer ones in memory. The rest are filled with the newest — they are looked
+* at more often.
  *
- * Забутий місяць не втрачається назавжди: коли його відкриють
- * знову, звичайний запит принесе його за три секунди.
+ * Discarded month is not lost forever: when it's opened again,
+* a normal request will bring it back in three seconds.
  *
  * @param {Array<string>} periodKeys
  * @param {Array<string>} mustKeep
  * @param {number} limit
  * @returns {Array<string>}
+ *
  */
 function trimToLimit(periodKeys, mustKeep, limit) {
   if (periodKeys.length <= limit) return periodKeys;
@@ -149,25 +158,27 @@ function trimToLimit(periodKeys, mustKeep, limit) {
 }
 
 /**
- * Скільки місяців знімка лишається на диску.
+ * How many months of the snapshot remain on disk.
  *
- * Офлайн потрібен для «що я витратив вчора», а не за архів за два
- * роки. Три місяці — це трохи більше за 100 КБ, і цифри на екрані
- * лишаються правильними: місяць у кеші завжди цілий.
+ * Offline is needed for "what I spent yesterday", not for the
+ * history for two years. Three months is a bit more than 100 KB, and the
+* numbers on the screen remain correct: a month in the cache is always whole.
+ *
  *
  */
 const CACHED_MONTHS_LIMIT = 3;
 
 /**
- * Відкидає місяці, які старші за останні.
+ * Discard months older than the last ones.
  *
- * Межа — по місяцях, а не по днях: частковий місяць дав би
- * правильне на око, але неправильне за сумою «Залишок». Краще
- * не показувати місяць узагалі, ніж показати його половину.
+ * The limit is by months, not days: a partial month would give
+ * a correct-looking, but incorrect sum. Better not to show
+* the month at all, than to show half of it.
  *
  * @param {{ transactions: Array<object>, loadedPeriods: Array<string> }} snapshot
- * @param {string} activePeriodKey — його не відкидаємо навіть якщо він найстаріший
+ * @param {string} activePeriodKey — it is not discarded even if it's the oldest
  * @returns {{ transactions: Array<object>, loadedPeriods: Array<string> }}
+ *
  */
 function trimSnapshotToRecentMonths(snapshot, activePeriodKey) {
   const keptPeriods = trimToLimit(
@@ -185,35 +196,35 @@ function trimSnapshotToRecentMonths(snapshot, activePeriodKey) {
     ),
   });
 }
-/** Незмінний початковий стан — до нього повертаємось при помилці. */
+/** Not-mutable initial state — we return to it on error. */
 function createInitialState() {
   return {
-    /** @type {{ name: string, color: string }} хто увійшов */
+    /** @type {{ name: string, color: string }} who logged in */
     viewer: ANONYMOUS_VIEWER,
     /** @type {Array<object>} */
     categories: [],
     /** @type {Array<object>} */
     transactions: [],
     /**
-     * @type {Array<string>} місяці «РРРР-ММ», дані яких уже в пам'яті
+     * @type {Array<string>} months, whose data is already in memory
      *
-     * Тримаємо не всю історію, а лише відкриті місяці: на п'ятирічній
-     * історії це два десятки кілобайт замість двох мегабайтів.
+     * We don't keep the whole history, but only the open months: it's two
+     * dozen kilobytes instead of two megabytes.
      */
     loadedPeriods: [],
-    /** @type {Array<object>} дії, які ще не дійшли до сервера */
+    /** @type {Array<object>} actions that haven't reached the server yet */
     pendingEntries: loadPendingEntries(null),
-    /** @type {string} ISO-час останньої успішної синхронізації */
+    /** @type {string} ISO-time of the last successful synchronization */
     lastSyncedAt: null,
-    /** @type {string} значення SYNC_STATE */
+    /** @type {string} value of SYNC_STATE */
     syncState: SYNC_STATE.loading,
-    /** @type {string} коротке пояснення для індикатора */
+    /** @type {string} short explanation for the indicator */
     syncMessage: "",
-    /** @type {string | null} машинний код останньої помилки, якщо була */
+    /** @type {string | null} machine code of the last error, if any */
     syncErrorCode: null,
     /**
-     * Сама помилка останньої невдачі — щоб екран входу міг відрізнити
-     * «невірний код» від «забагато спроб» і показати потрібне.
+     * The error itself of the last failure — so the login screen can distinguish
+     * "wrong code" from "too many attempts" and show the appropriate one.
      * @type {Error | null}
      */
     lastSyncError: null,
@@ -226,26 +237,26 @@ class BudgetStore {
   #state = createInitialState();
   #listeners = new Set();
   #sessionToken = null;
-  /** @type {string | null} логін поточної сесії: черга належить йому */
+  /** @type {string | null} login of the current session: the queue belongs to it */
   #sessionLogin = null;
-  /** @type {Promise<void> | null} відправка, яка вже триває */
+  /** @type {Promise<void> | null} submission that is already in progress */
   #flushPromise = null;
-  /** @type {Set<string>} місяці, які зараз завантажуються */
+  /** @type {Set<string>} months that are currently being loaded */
   #loadingPeriods = new Set();
-  /** @type {string | null} місяць, який користувач дивиться зараз */
+  /** @type {string | null} month that the user is looking at now */
   #activePeriodKey = null;
   /**
-   * @type {Map<string, Array<object>>} ліміти, вже бачені за цю сесію
+   * @type {Map<string, Array<object>>} limits, already seen for this session
    *
-   * Ліміти належать місяцю, тому «повернутися на жовтень» означає
-   * побачити жовтневий бюджет, а не той, що був на екрані мить тому.
-   * Тримаємо їх окремо від місяців, щоб повторне перемикання не
-   * вимагало запиту.
+   * Limits belong to the month, so "returning to October" means
+   * seeing the October budget, and not the one that was on the screen
+   * a moment ago. We keep them separately from the months, so that repeated
+   * switching doesn't require another request.
    */
   #categoriesByLimitPeriod = new Map();
   /**
-   * Токен завжди йде з логіном: вони визначають, чию чергу
-   * ми читаємо і чиї записи відправляємо.
+   * Token always goes with the login: they define whose queue
+   * we read and whose records we send.
    *
    * @param {{ token: string, login: string } | null} session
    */
@@ -253,8 +264,8 @@ class BudgetStore {
     this.#sessionToken = session?.token ?? null;
     this.#sessionLogin = session?.login ?? null;
 
-    // Черга змінюється разом із входом, тому перечитуємо її з
-    // пам'яті: щоб на екрані було видно саме свої записи.
+    // The queue changes with login, so we reload it from
+    // memory: so that the UI shows only the user's own records.
     this.#patch({ pendingEntries: loadPendingEntries(this.#sessionLogin) });
   }
 
@@ -265,7 +276,7 @@ class BudgetStore {
 
   /**
    * @param {(state: Readonly<object>) => void} listener
-   * @returns {() => void} функція відписки
+   * @returns {() => void} unsubscribe function
    */
   subscribe(listener) {
     this.#listeners.add(listener);
@@ -279,8 +290,8 @@ class BudgetStore {
   }
 
   /**
-   * Гідрація з кешу — щоб сторінка не була порожньою,
-   * поки йде запит до Google.
+   * Hydration from cache — so that the page is not empty
+   * while the request to Google is going.
    */
   hydrateFromCache() {
     const cachedSnapshot = loadCachedSnapshot();
@@ -300,9 +311,9 @@ class BudgetStore {
   }
 
   /**
-   * Основний цикл синхронізації:
-   * спершу відправляє чергу, потім перечитує таблицю.
-   * @returns {Promise<boolean>} — чи вдалося
+   * Main synchronization loop:
+   * first sends the queue, then reloads the table.
+   * @returns {Promise<boolean>} — whether it succeeded
    */
   async synchronize() {
     this.#patch({ syncState: SYNC_STATE.loading, syncMessage: "", syncErrorCode: null, lastSyncError: null });
@@ -321,8 +332,8 @@ class BudgetStore {
   }
 
   /**
-   * Синхронізовано тоді й лише тоді, коли черга порожня.
-   * Винесено окремо, бо стан визначається у кількох місцях.
+   * Synchronized if and only when the queue is empty.
+   * Extracted separately because the state is defined in several places.
    */
   #patchSyncStateFromQueue() {
     this.#patch({
@@ -331,10 +342,10 @@ class BudgetStore {
   }
 
   /**
-   * Відправляє чергу по черзі, щоб не порушити порядок.
+   * Sends the queue entry by entry, so the order is not violated.
    *
-   * Коли вже йде відправка, другий виклик приєднується до неї, а не
-   * починає паралельну: інакше два записи можуть піти двічі.
+   * When an submission is already in progress, the second call joins it
+   * and doesn't start a parallel one: otherwise two records could go twice.
    *
    * @returns {Promise<void>}
    */
@@ -349,17 +360,18 @@ class BudgetStore {
   }
 
   /**
- * Надсилає один запис черги відповідною дією.
- *
- * Дії три, але спільне в них одне: усі повертають оновлений знімок,
- * тому `#sendQueuedEntries` не знає, яку саме дію надіслано.
- *
- * @param {object} queuedEntry
- * @param {Array<string>} periods
- * @param {string} limitPeriod
- * @returns {Promise<{ snapshot: object }>}
- */
-async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
+   * Sends one queue entry with the corresponding action.
+   *
+   * There are three actions, but they all have one in common: all return
+   * an updated snapshot, so `#sendQueuedEntries` doesn't know which
+   * action was sent.
+   *
+   * @param {object} queuedEntry
+   * @param {Array<string>} periods
+   * @param {string} limitPeriod
+   * @returns {Promise<{ snapshot: object }>}
+   */
+  async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
     if (queuedEntry.action === "delete") {
       return deleteTransaction(this.#sessionToken, queuedEntry.transactionId, periods, limitPeriod);
     }
@@ -372,9 +384,10 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Бере по одному запиту з черги й перечитує список щоразу — тоді
-   * запис, доданий під час відправки, теж підхопиться в цій самій
-   * серії, а не залишиться на потім.
+   * Processes the queue entries one by one — so that the order
+   * is kept, and the record, which was added during the submission,
+   * is also picked up in the same series, and doesn't remain
+   * for later.
    *
    * @returns {Promise<void>}
    */
@@ -397,8 +410,8 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
         this.#applySnapshot(response.snapshot, limitPeriod);
         this.#removeFromQueue(nextQueuedEntry.id);
       } catch (error) {
-        // Прострочена сесія - не відмова. Запис лишається в
-        // черзі й дійде одразу після повторного входу.
+        // Expired session - not a failure: the record remains
+        // in the queue and will arrive after the next login.
         if (isSessionExpired(error)) throw error;
 
         if (!isWorthRetrying(error)) {
@@ -410,7 +423,15 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
     }
   }
 
-  /** @returns {Promise<void>} */
+  /**
+   * Reloads the snapshot.
+   *
+   * `#applySnapshot` does this along with the reading, but the optimistic
+   * copy disappears right after it — because of `#removeFromQueue`. Without
+   * re-writing, the cache would keep it forever: when the tab is
+   * refreshed, the merge wouldn't recognize it as the same record,
+   * so two lines for the same expense would appear in the list.
+   */
   async #reloadSnapshot() {
     this.#applySnapshot(
       await fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods(), this.#limitPeriod()),
@@ -419,16 +440,16 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Місяці, які хочемо отримати від сервера: уже завантажені плюс
-   * відкритий і той, що йому передуває.
+   * Months we want to get from the server: already loaded
+   * plus the open one and the one preceding it.
    *
-   * Запит лише цих місяців — інакше серверний знімок витер би те,
-   * що ми вже завантажили. Відкритий місяць додається окремо: він мусить
-   * бути на екрані, навіть якщо його витіснив з пам'яті власний запит.
+   * Request only these months — otherwise the server snapshot
+   * would wipe out what we already loaded. The open month is added
+   * separately: it must be on the screen, even if it was kicked out
+   * of memory by a more recent request.
    *
-   * Завжди повертає повний набір, тож одного виклику synchronize()
-   * вистачає й на перший вхід із довільним місяцем — окремий запит
-   * за відкритим місяцем уже не потрібен.
+   * Always returns the full set, so a single request to the open
+   * month doesn't require a separate request for the open month.
    *
    * @returns {Array<string>}
    */
@@ -441,48 +462,53 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Місяць, для якого показуємо бюджет: той, що відкритий на екрані.
+   * The month we are looking at: the one open on the screen.
    *
-   * Ліміти надсилаються окремо від операцій саме тому, що операції
-   * потрібні за два місяці, а бюджет — лише за один. Узяти ліміти з
-   * усіх запитаних місяців означало б бачити жовтневий бюджет і в
-   * вересні, де його не задавали.
+   * Limits are sent separately from operations just because
+   * operations are needed for two months, while the budget — only for one.
+   * Taking limits from all requested months would mean seeing the
+   * October budget in September too, where it wasn't set.
    *
    * @returns {string}
    */
   #limitPeriod() {
     return this.#activePeriodKey ?? currentPeriodKey();
   }
+
   /**
-   * Запам'ятовує, який місяць користувач дивиться.
+   * Remembers which month the user is looking at.
    *
-   * Це единий спосіб, яким сторінка впливає на те, які місяці
-   * переживають обмеження пам'яті: відкритий місяць не можна
-   * викинути, бо інакше панелі назавжди залишаться порожніми.
+   * This is the only way the page affects what months
+   * stay in memory: the open month cannot be kicked
+   * out, because otherwise the panels would forever
+   * stay empty: the request would bring the required month
+   * and then immediately kick it out because there were already twelve
+   * newer ones in memory.
    *
-   * @param {string} periodKey — «2026-10»
+   * @param {string} periodKey — "2026-10"
    */
   setActivePeriod(periodKey) {
     this.#activePeriodKey = periodKey;
   }
 
   /**
-   * Чи вже є дані за цей місяць.
-   * @param {string} periodKey — «2026-10»
+   * Whether there is data for this month.
+   * @param {string} periodKey — "2026-10"
    */
   isPeriodLoaded(periodKey) {
     return this.#state.loadedPeriods.includes(periodKey);
   }
 
   /**
-   * Догружає місяць, якого ще немає в пам'яті.
+   * Loads the month, if it's not in memory yet.
    *
-   * Береться місяць **і попередній**: попередній потрібен для
-   * «динаміки до минулого місяця». Тому місяць вважається готовим
-   * лише тоді, коли готовий і попередній — інакше порівняння просто
-   * не з'явиться, хоча дані для нього є.
+   * The month and its predecessor are taken: the predecessor is needed
+   * for the "comparison to last month" indicator. So the month is
+   * only considered ready when its predecessor is also ready — otherwise
+   * the comparison just won't appear, even though the data for it is
+   * there.
    *
-   * @param {string} periodKey — «2026-10»
+   * @param {string} periodKey — "2026-10"
    * @returns {Promise<void>}
    */
   async loadPeriod(periodKey) {
@@ -492,17 +518,17 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
     const areMonthsLoaded = neededPeriods.every((needed) => this.isPeriodLoaded(needed));
     const knownCategories = this.#categoriesByLimitPeriod.get(periodKey);
 
-    // Місяць уже в пам'яті й його ліміти ми вже бачили — повертаємося
-    // миттєво, без запиту. Ліміти тримаємо окремо від місяців, бо
-    // вони змінюються разом з тим, який місяць відкритий.
+    // The month is already in memory and we already saw its limits — return
+    // instantly, without a request. Limits are kept separately from months,
+    // because they change along with which month is open.
     if (areMonthsLoaded && knownCategories) {
       this.#patch({ categories: knownCategories });
       return;
     }
 
-    // Не дублювати роботу, поки запит із тими самими місяцями ще
-    // в дорозі. Швидке перемикання двома кліками не має породжувати
-    // два однакові запити.
+    // Do not duplicate work, while the request with the same months is
+    // still in flight. A fast switch between two clicks won't
+    // produce two identical requests.
     if (neededPeriods.some((needed) => this.#loadingPeriods.has(needed))) return;
     neededPeriods.forEach((needed) => this.#loadingPeriods.add(needed));
 
@@ -520,18 +546,21 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Застосовує знімок, надісланий разом із відповіддю на дію —
-   * так минає другий запит і близько 3 секунди.
+   * Applies the snapshot, sent along with the response to the action —
+   * we skip the second request and take about 3 seconds.
    *
-   * Знімок покриває тільки записані в ньому місяці, тому операції
-   * за інші місяці залишаються на місці: додали запис у квітні, а
-   * відкритий березень не зникає.
+   * The snapshot covers only the months that were entered in it,
+   * so operations from other months remain: added a record in April,
+   * and the open month is March, so it doesn't disappear even if it
+   * was kicked out from memory.
    *
-   * Якщо сервер знімка не повернув (наприклад, задеплоєна старіша
-   * версія скрипта) — перечитуємо окремим запитом, щоб не ламалася.
+   * If the server didn't return the snapshot (e.g.,
+   * deployed an older version of the script) — reload
+   * separately, so the app doesn't break.
    *
    * @param {object | undefined} snapshot
-   * @param {string} limitPeriod — місяць, чиї ліміти прийшли у знімку
+   * @param {string} limitPeriod — month whose limits came in the snapshot
+   *
    */
   #applySnapshot(snapshot, limitPeriod) {
     if (!snapshot) return false;
@@ -545,9 +574,10 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
     const snapshotTransactions = snapshot.transactions ?? [];
     const knownIds = new Set(snapshotTransactions.map((transaction) => transaction.id));
 
-    // Решта місяців лишається як є. Несинхронізовані записи
-    // переживають навіть тоді, коли їхній місяць прийшов у знімку:
-    // сервер про них ще не знає, тож замінити їх нічим не можна.
+    // Other months remain as they are: unsynchronized records
+    // survive even when their month comes into the snapshot:
+    // the server doesn't know about them yet, so they can't be
+    // replaced by anything, and they won't disappear out of thin air.
     const keptTransactions = this.#state.transactions.filter((transaction) => {
       if (!coveredPeriods.includes(periodKeyOf(transaction))) return true;
       return transaction.pending === true && !knownIds.has(transaction.id);
@@ -559,9 +589,9 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       MAX_LOADED_PERIODS,
     );
 
-    // Дані місяців, що випали з пам'яті, прибираємо разом із ними:
-    // інакше вони лишилися б лежати в кеші без причини, а прапор
-    // «завантажений» брехав би.
+    // Months that fell out of memory are removed with them:
+    // otherwise they would stay in the cache for no reason, and the
+    // "loaded" flag would lie.
     const transactions = [...keptTransactions, ...snapshotTransactions].filter(
       (transaction) =>
         transaction.pending === true || loadedPeriods.includes(periodKeyOf(transaction)),
@@ -582,15 +612,18 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Розкладає помилку на стан індикатора.
-   * Код зберігається окремо від тексту — щоб main.js міг прийняти
-   * рішення про повторний запит пароля, не парсячи рядки.
+   * Extracts the error state.
+   *
+   * The code is saved separately from the text — so main.js can
+   * take a decision about re-trying the password without
+   * parsing strings.
    *
    * @param {unknown} error
+   *
    */
   #handleSyncError(error) {
     const errorCode = error instanceof ApiError ? error.code : null;
-    const errorMessage = error instanceof Error ? error.message : "Невідома помилка синхронізації";
+    const errorMessage = error instanceof Error ? error.message : "Unknown synchronization error";
 
     if (AUTH_FAILURE_CODES.includes(errorCode)) {
       this.#patch({
@@ -612,9 +645,10 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Додає операцію: сперку показує її в UI, потім відправляє.
-   * Поле `user` тут відсутнє навмисно — його проставляє сервер
-   * із сесійного токена, тож підробити ім'я неможливо.
+   * Adds a transaction: first show it in UI, then send it.
+   *
+   * The `user` field is deliberately missing — the server sets it
+   * from the session token, so it's impossible to forge the author.
    *
    * @param {object} transaction
    * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
@@ -628,8 +662,8 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       this.#patchSyncStateFromQueue();
       return { deliveredImmediately: true, error: null };
     } catch (error) {
-      // Прострочена сесія - не відмова: запис лишається в
-      // черзі й дійде після повторного входу.
+      // Expired session - not a failure: the record remains
+      // in the queue and will arrive after the next login.
       if (!isWorthRetrying(error) && !isSessionExpired(error)) {
         this.#discardPendingEntry(queuedEntryId);
         this.#patchSyncStateFromQueue();
@@ -651,8 +685,8 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       this.#patchSyncStateFromQueue();
       return { deliveredImmediately: true, error: null };
     } catch (error) {
-      // Прострочена сесія - не відмова: видалення лишається
-      // в черзі й дійде після повторного входу.
+      // Expired session - not a failure: the deletion remains
+      // in the queue and will arrive after the next login.
       if (!isWorthRetrying(error) && !isSessionExpired(error)) {
         this.#discardPendingEntry(queuedEntryId);
         this.#patchSyncStateFromQueue();
@@ -662,20 +696,22 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Переписує наявну операцію.
+   * Updates an existing record.
    *
-   * Два випадки, і вони принципово різні:
+   * Two cases, and they are fundamentally different:
    *
-   *   запис уже в таблиці — надсилаємо дію `update`, оптимістично
-   *     міняємо його на місці; id лишається серверним, тож злиття зі
-   *     знімком замінить копію версією з таблиці;
+   *   the record is already in the table — send the `update` action,
+   *     optimistically change it in place; id remains the server's,
+   *     so merging with the snapshot will replace the copy
+   *     with the version from the table;
    *
-   *   запис досі в черзі — окремої дії не потрібно. Він ще не дійшов,
-   *     тож правимо чернетку прямо в черзі, інакше сервер отримав би
-   *     `update` для рядка, якого в таблиці немає.
+   *   the record is still in the queue — no separate action is needed.
+   *     it hasn't reached the server yet, so just update the draft
+   *     directly in the queue, otherwise the server would receive
+   *     an `update` for a row that doesn't exist.
    *
    * @param {string} transactionId
-   * @param {object} changes — сума, категорія, дата, нотатка
+   * @param {object} changes — sum, category, date, note
    * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
    */
   async updateTransaction(transactionId, changes) {
@@ -691,9 +727,10 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
           action: "update",
           transactionId,
           transaction: { ...previous, ...changes, recordedAt: new Date().toISOString() },
-          // Попередні значення потрібні, щоб відкотити правку, якщо
-          // сервер відхилить її остаточно: інакше запис лишився б у
-          // списку з новими даними й назавжди «очікував би».
+          // Previous values are needed to rollback the edit, if
+          // the server ultimately rejects it: otherwise the record
+          // would stay in the list with new values and just
+          // wait forever.
           previous: { ...previous },
         });
 
@@ -712,14 +749,14 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Править чернетку запису, який ще не дійшов до сервера.
+   * Amends a draft record that hasn't reached the server yet.
    *
-   * Окремої дії в черзі не додається: запис створиться з новими
-   * значеннями, коли черга дійде до нього.
+   * No separate action is added to the queue: the record will be
+   * created with the new values when the queue reaches it.
    *
    * @param {string} transactionId
    * @param {object} changes
-   * @returns {string} id запису черги, який тепер описує цю правку
+   * @returns {string} the ID of the queue record now describing this edit
    */
   #amendQueuedEntry(transactionId, changes) {
     const currentEntries = loadPendingEntries(this.#sessionLogin);
@@ -742,10 +779,13 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Кладе дію в чергу й одразу показує її в UI.
+   * Puts an action into the queue and immediately shows it in UI.
+   *
+   * The `user` field is deliberately missing — the server sets it
+   * from the session token, so it's impossible to forge the author.
    *
    * @param {object} pendingAction
-   * @returns {string} ідентифікатор запису в черзі
+   * @returns {string} the ID of the record in the queue
    */
   #enqueuePendingEntry(pendingAction) {
     const queuedEntry = { ...pendingAction, id: crypto.randomUUID() };
@@ -759,19 +799,21 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
       this.#patch({
         pendingEntries: updatedEntries,
         syncState,
-        // id черги стає тимчасовим id запису. Без нього оптимістична
-        // копія лишалася б без ідентифікатора, і злиття зі знімком
-        // не могло б зрозуміти, що це вже той самий запис.
+        // The queue ID becomes the temporary record ID. Without it,
+        // the optimistic copy would lack an identifier, and the
+        // merge with the snapshot wouldn't recognize it
+        // as the same record.
         transactions: [
           ...this.#state.transactions,
           { ...queuedEntry.transaction, id: queuedEntry.id, pending: true },
         ],
       });
     } else if (queuedEntry.action === "update") {
-      // Правка змінює запис на місці: id лишається серверним, тож
-      // злиття зі знімком замінить копію тією версією, що прийшла
-      // з таблиці. Прапорець pending гасить зліт з оригіналом,
-      // доки сервер не підтвердить.
+      // Editing changes the record in place: the id remains the server's,
+      // so merging with the snapshot will replace the copy
+      // with the version that came from the table.
+      // The pending flag clears the merge with the original,
+      // until the server eventually confirms it.
       this.#patch({
         pendingEntries: updatedEntries,
         syncState,
@@ -795,14 +837,15 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Перезаписує кеш сторінки.
+   * Updates the cache of the page.
    *
-   * `#applySnapshot` робить це разом із читанням, але оптимістична
-   * копія зникає вже після нього — у `#removeFromQueue`. Без
-   * повторного запису кеш зберігав би її назавжди: після
-   * перезавантаження сторінки злиття не могло б її розпізнати
-   * (її id належить черзі, а не таблиці), тож у списку з'явилися
-   * б два рядки про одну й ту саму витрату.
+   * `#applySnapshot` does this along with the reading, but the
+   * optimistic copy disappears right after it — because of `#removeFromQueue`.
+   * Without re-writing, the cache would keep it forever: when the tab
+   * is refreshed, the merge wouldn't recognize it
+   * as the same record, so two lines for the same expense would appear
+   * in the list.
+   *
    *
    */
   #saveCache() {
@@ -820,8 +863,9 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   #removeFromQueue(queuedEntryId) {
     const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
     savePendingEntries(this.#sessionLogin, remainingEntries);
-    // Запис з сервера вже в знімку, тому оптимістичну копію прибираємо:
-    // інакше в списку було б два рядки про одну й ту саму витрату.
+    // The record from the server is already in the snapshot, so the
+    // optimistic copy is removed: otherwise it would stay
+    // in the list as a duplicate of the record already in the table.
     this.#patch({
       pendingEntries: remainingEntries,
       transactions: this.#state.transactions.filter(
@@ -833,23 +877,23 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Коригує поточну суму цілі (додає або віднімає).
+   * Adjusts the current goal amount (addition or subtraction).
    *
-   * @param {object} goal — { id, amount } — amount може бути додатнім (+) або від'ємним (-)
-   * @returns {Promise<{ success: boolean, error?: ApiError }>}
+   * @param {object} goal — { id, amount } — amount can be positive (+) or negative (-)
+   * @returns {Promise<{ success: boolean, error: ApiError | null }>}
    */
   async adjustGoal(goal) {
-    if (!this.#sessionToken) return { success: false, error: new Error("Сесія не ініціалізована") };
+    if (!this.#sessionToken) return { success: false, error: new Error("Session not initialized") };
 
     try {
       const response = await adjustGoal(this.#sessionToken, goal.id, goal.amount);
-      
-      // Оновлюємо ціль у списку (по ID)
+
+      // Update the goal in the list (by ID)
       this.#patch({ 
         goals: this.#state.goals.map((g) => g.id === goal.id ? { ...g, progress: response.goal.progress, monthlyRequirement: response.goal.monthlyRequirement } : g) 
       });
-      
-      // Зберігаємо в кеш
+
+      // Save to cache
       this.#saveCache();
 
       return { success: true };
@@ -862,14 +906,16 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Прибирає дію з черги назавжди — коли сервер відхилив її остаточно.
-   * Повторювати такий запит безглуздо: він лише блокував би решту черги.
+   * Discards the action from the queue forever — when the server finally rejects it.
+   * Retrying such a request is pointless: it would only block the rest of the queue.
    *
-   * Для правки відкатуємо запис до попередніх значень: інакше він
-   * лишився б у списку з новими даними й прапорцем «очікує», хоча
-   * його вже ніхто не відправить.
+   * For editing, we rollback the record to previous values: otherwise
+   * it would stay in the list with new values and the
+   * flag "waiting", even though
+   * it will never be sent.
    *
    * @param {string} queuedEntryId
+   *
    */
   #discardPendingEntry(queuedEntryId) {
     const [discardedEntry] = loadPendingEntries(this.#sessionLogin)
@@ -892,11 +938,12 @@ async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
   }
 
   /**
-   * Скидає стан на виході («забути пароль»).
+   * Resets the state on logout ("forget password").
    *
-   * Чергу НЕ чистить: вона належить людині, а не сесії, і має
-   * дійти, коли вона знову увійде. Кеш знімка чистимо — це дані
-   * попереднього користувача, і наступному показувати їх не треба.
+   * The queue is NOT cleared: it belongs to the person, not the session,
+   * and should arrive when they log in again. The snapshot cache is
+   * cleared — it's the previous user's data, and the next user
+   * shouldn't see it.
    */
   reset() {
     clearCachedSnapshot();

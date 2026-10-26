@@ -1,17 +1,21 @@
 /**
- * entryForm.js — картка введення витрати.
+ * entryForm.js — expense entry card.
  *
- * Відповідає за валідацію, підстановку списку категорій і передачу
- * зібраних даних наверх через колбек. Про відправку в Google нічого
- * не знає — це робить store.
+ * Responsible for validation, category list insertion, and passing
+ * collected data upwards via a callback. It knows nothing about
+ * transmission to Google — that is handled by the store.
  *
- * Типу операції тут немає: доходи не вводяться взагалі, тому й
- * перемикати між ними нічого.
  *
- * На вузькому екрані форма згорнута до одного поля суми: категорії,
- * дата й нотатка з'являються, як тільки починають вводити. На
- * широкому екрані згортання немає — місця вистачає, і ховати
- * категорії зайве.
+ * There is no operation type here: incomes are not entered at all, so
+ * there is nothing to toggle between them.
+ *
+ *
+ * On narrow screens, the form is collapsed into a single amount field:
+ * categories, date, and note appear only when something is typed in.
+ * On wide screens, there is no collapse — there is enough space,
+ * and hiding categories is unnecessary.
+ *
+ *
  */
 
 import { evaluateAmountExpression, canAppendOperator } from "../domain/amountExpression.js";
@@ -22,28 +26,30 @@ import { clearChildren, createElement, findById, on, setVisibility, setStatusMes
 
 const MAX_SAFE_AMOUNT = 100_000_000;
 
-/** Скільки щонайменше показувати запис у смузі, навіть якщо синхронізувався. */
+/** Minimum amount of time to show a record in the strip, even if it's already synchronized. */
 const RECENT_ENTRY_MIN_VISIBLE_MS = 15_000;
 
-/** Більше трьох рядків у смузі некорисні: далі — це вже історія. */
+/** More than three lines in the strip are useless: beyond that — it's history. */
 const MAX_RECENT_ENTRIES = 3;
 
-/** Форматує дату й час як ISO-рядок (напр. "2026-10-16T14:30" або лише дату). */
+/** Formats date and time as an ISO string (e.g., "2026-10-16T14:30" or just the date). */
 function selectDateTime(datePart, timePart) {
   if (!timePart) return datePart;
   return `${datePart}T${timePart}`;
 }
 
 /**
- * Парсить час з повного ISO-рядка (напр. "2026-10-16T14:30") і повертає рядок "ГГ:ММ".
- * Використовує Date для надійності, а не текстовий парсинг.
+ * Parses the time from a full ISO string (e.g., "2026-10-16T14:30") and returns the string "HH:MM".
+ * Uses Date for reliability, not text parsing.
+ *
+ *
  */
 function parseTimeFromOccurred(occurredOn) {
   if (!occurredOn) return '';
   try {
-    // Створюємо об'єкт Date з ISO-рядка та отримуємо час у форматі "ГГ:ММ".
+    // Create a Date object from an ISO string and get the time in "HH:MM" format.
     const date = new Date(occurredOn);
-    if (isNaN(date)) return ''; // Помилковий рядок не дасть валідного об'єкта
+    if (isNaN(date)) return ''; // An invalid string won't give a valid object
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   } catch (e) {
     return '';
@@ -62,6 +68,8 @@ function parseTimeFromOccurred(occurredOn) {
  *   loadForEdit: (transaction: object) => void,
  *   cancelEdit: () => void,
  * }}
+ *
+ *
  */
 export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, onEditCancel }) {
   const formElement = findById("entryForm");
@@ -82,7 +90,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   const timeInputElement = findById("entryTimeInput");
   const noteInputElement = findById("entryNoteInput");
 
-  // Додаємо елемент для помилок часу.
+  // Add element for time errors.
   const entryTimeErrorElement = findById("entryTimeError");
 
   const submitButtonElement = findById("entrySubmitButton");
@@ -92,36 +100,39 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   const editingTextElement = findById("entryEditingText");
   const cancelEditButtonElement = findById("entryCancelEditButton");
 
-  /** Стан форми, який не зберігається в DOM-атрибутах. */
+  /** State of the form, which is not stored in DOM attributes. */
   const formState = {
     selectedCategoryName: null,
-    /** id операції, яку зараз правимо; null — це новий запис. */
+    /** id of the transaction being edited; null — it's a new record. */
     editingTransactionId: null,
     /**
-     * Показувати неактивні категорії.
+     * Show inactive categories.
      *
-     * Живе лише до перезавантаження: потреба рідка (внести витрату
-     * за минулий місяць, де категорію уже вимкнули), тож запам'ятовувати
-     * такий стан означало б назавжди залишити в формі всі категорії.
+     *
+     * Lives only until page reload: sometimes a person needs to input
+     * an expense for the previous month, where the category was already
+     * disabled, so remembering this state would mean keeping all
+     * categories in the form forever.
      */
     showAllCategories: false,
     /**
-     * Дата, яку ми підставили самі при очищенні форми.
+     * Date that we set ourselves when clearing the form.
      *
-     * Потрібна, щоб відрізнити «користувач нічого не чіпав» від
-     * «користувач сам поставив вчорашню дату». Без неї оновлення
-     * при поверненні на вкладку перезаписало б ручний вибір.
+     *
+     * Needed to distinguish "user did nothing" from
+     * "user intentionally set yesterday's date". Without it, returning
+     * to the tab would overwrite manual selection.
      */
     autoFilledDate: null,
   };
 
-  /** Чи є взагалі що запропонувати вибрати. */
+  /** Whether there is anything to offer to select. */
   let hasActiveCategories = false;
 
-  /** Щойно збережені записи: категорія, сума, час і id черги. */
+  /** Just saved records: category, amount, time and queue id. */
   let recentEntries = [];
 
-  /** Таймер на зняття смуги, коли мине п'ятнадцять секунд. */
+  /** Timer for removing the strip when fifteen seconds have passed. */
   let recentEntriesTimer = null;
 
   const compactMediaQuery = window.matchMedia("(max-width: 899px)");
@@ -132,33 +143,34 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   initCategoryToggle();
   initDateTimeRefresh();
 
-  // Стартовий стан: поле порожнє, тож кнопка має бути сіра вже
-  // до першого натискання, а не після нього.
+  // Initial state: field is empty, so the button should be gray
+  // already before the first click, not after it.
   refreshAmountPreview();
 
   on(formElement, "submit", handleSubmit);
-  
-  // Ініціалізація форми з коректним поточним часом.
+
+  // Initialize the form with the correct current time.
   resetFormFields();
 
-  /* ── Редагування наявної операції ────────────────────────────────────── */
+  /* ── Editing the existing operation ────────────────────────────────────────── */
 
   /**
-   * Форма одна й та сама — окремої форми «правки» немає. Тому
-   * додавання й редагування діляться однією валідацією, одним
-   * розбором виразу суми й одним розгортанням.
+   * Form is the same — there is no separate "edit" form. Therefore
+   * addition and editing share one validation, one sum expression analysis
+   * and one expansion.
    */
   function initEditMode() {
     on(cancelEditButtonElement, "click", cancelEdit);
   }
 
   /**
-   * Розкриває неактивні категорії — і навпаки.
+   * Unfolds inactive categories — and vice versa.
    *
-   * Стан лишається тільки до перезавантаження сторінки: раз на
-   * кілька місяців хтось вносить витрату за минулий тиждень, і
-   * запам'ятовувати такий перемикач означало б назавжди залишити
-   * в формі весь каталог.
+   *
+   * State remains only until page reload: sometimes someone enters
+   * an expense for the previous month, where the required category
+   * was already disabled, and remembering this switch would mean
+   * leaving all categories in the form forever.
    */
   function initCategoryToggle() {
     on(categoryToggleElement, "click", () => {
@@ -168,13 +180,15 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Заповнює форму значеннями наявного запису.
+   * Fills the form with values from the existing record.
    *
-   * Форма навмисно лишається розгорнутою до збереження чи скасування:
-   * людина прийшла сюди щось змінити, тож ховати поля одразу було б
-   * незручно.
+   *
+   * Form is intentionally left expanded: the user came here to
+   * change something, so hiding fields immediately would be
+   * inconvenient.
    *
    * @param {object} transaction
+   *
    */
   function loadForEdit(transaction) {
     formState.editingTransactionId = transaction.id;
@@ -184,7 +198,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     const occurredOn = transaction.occurredOn ?? toLocalIso(new Date()).slice(0, 10);
 
     dateInputElement.value = occurredOn.split('T')[0] ?? occurredOn;
-    timeInputElement.value = parseTimeFromOccurred(occurredOn) || toLocalIso(new Date()).slice(11, 16); // Якщо часу немає — ставимо поточний
+    timeInputElement.value = parseTimeFromOccurred(occurredOn) || toLocalIso(new Date()).slice(11, 16); // If no time — set current
     noteInputElement.value = transaction.note ?? "";
 
     submitButtonElement.textContent = "Зберегти зміни";
@@ -193,15 +207,16 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
     renderCategoryChips(store.getState().categories);
     refreshAmountPreview();
-    // Правитимуть — значить поля мають бути на екрані. Стан
-    // «compact» тут лише заважав би: довелося б ще клацнути в суму.
+    // Editing — means fields must be on the screen: so the state
+    // "compact" would only hinder: one would have to click in the sum
+    // to see it.
     setFormState("expanded");
     clearFieldError(amountInputElement, amountErrorElement);
     clearFieldError(categoryChipsElement, categoryErrorElement);
 
-    // Форма згорнута лише до 899px, де вона стоїть над табами.
-    // Без прокрутки тап по «редагувати» на телефоні нічого не
-    // дав би: користувач дивився б у бік від щойно заповненої форми.
+    // Form is collapsed only at 899px, where it stands above the tabs.
+    // Without scrolling, a tap on "edit" on a phone would not
+    // give anything: the user would be looking away from the just-filled form.
     if (compactMediaQuery.matches) {
       formElement.scrollIntoView({ behavior: "smooth", block: "start" });
     }
@@ -220,24 +235,24 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     onEditCancel?.();
   }
 
-  /** Чи зараз форма править наявний запис, а не створює новий. */
+  /** Whether the form is currently editing an existing record, not creating a new one. */
   function isEditing() {
     return formState.editingTransactionId !== null;
   }
 
-  /* ── Компактний режим ─────────────────────────────────────────────────── */
+  /* ── Compact mode ─────────────────────────────────────────────────────────── */
 
   /**
-   * Коли на екрані тісно, форма показує лише суму й кнопку.
+   * When the screen is cramped, the form shows only the amount and the button.
    *
-   * Розгортання прив'язане до наявності тексту в полі суми, а не до
-   * фокусу: людина може піти в сусідній застосунок уточнити суму й
-   * повернутися — поле має зберегти те, що вона ввела.
+   * Expansion is tied to the presence of text in the amount field, not to
+   * focus: a person can go to another app to clarify the amount and
+   * return — the field must keep what they entered.
    */
   function initCompactMode() {
-    // Згортається лише там, де форма взагалі буває згорнутою.
-    // На широкому екрані втрата фокусу не має ховати поля: там
-    // перемикання між полями — звичайна річ, а не «погляд убік».
+    // Collapses only where the form is actually collapsed.
+    // On wide screens, loss of focus doesn't hide fields: there
+    // is enough space, and hiding categories is unnecessary.
     on(amountInputElement, "blur", () => {
       if (!compactMediaQuery.matches) return;
       if (amountInputElement.value.trim() === "") setFormState("compact");
@@ -247,7 +262,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     syncFormState();
   }
 
-  /** Перераховує стан форми під поточну ширину екрана й вміст поля. */
+  /** Recalculates the form state under the current screen width and field content. */
   function syncFormState() {
     const isCompactAllowed = compactMediaQuery.matches;
     const hasAmountText = amountInputElement.value.trim() !== "";
@@ -257,23 +272,23 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   /** @param {"compact" | "expanded"} state */
   function setFormState(state) {
-    // На широкому екрані стан «compact» не приховує полів: там
-    // згортання немає взагалі, і ховати категорії зайве.
+    // On wide screens, "compact" state doesn't hide fields: there
+    // is no collapse at all, and hiding categories is unnecessary.
     const isCompact = state === "compact" && compactMediaQuery.matches;
 
     formElement.dataset.formState = isCompact ? "compact" : "expanded";
 
-    // Розгорнуті поля недоступні з клавіатури, поки вони сховані:
-    // інакше Tab проскакував би по невидим елементах.
+    // Expanded fields are inaccessible via keyboard while they are hidden:
+    // otherwise Tab would skip over invisible elements.
     setVisibility(detailsElement, !isCompact);
   }
 
-  /* ── Редактор суми ───────────────────────────────────────────────────── */
+  /* ── Amount editor ────────────────────────────────────────────────────────── */
 
   /**
-   * Поле приймає і число («120»), і вираз («120+80+50»).
-   * Під полем з'являється рядок із результатом обчислення —
-   * саме цей результат і потрапить у таблицю.
+   * Field accepts numbers ("120") and expressions ("120+80+50").
+   * Below the field, a line with the calculation result appears —
+   * precisely this result will end up in the table.
    */
   function initAmountEditor() {
     on(amountInputElement, "input", () => {
@@ -282,8 +297,8 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
       syncFormState();
     });
 
-    // Кнопка «+» потрібна для телефонів: на екранній клавіатурі iOS
-    // клавіші «+» немає, тож вираз там набрати неможливо.
+    // "+" button is needed for phones: on the iOS keyboard
+    // there is no "+" key, so an expression cannot be typed there.
     on(amountAddButtonElement, "click", () => {
       if (!canAppendOperator(amountInputElement.value)) return;
 
@@ -302,8 +317,8 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
       amountInputElement.focus();
     });
 
-    // Enter у полі суми не має перехоплювати форму — інакше не зручно
-    // перейти до вибору категорії.
+    // Enter in the amount field should not hijack the form — otherwise it's
+    // inconvenient to move to the category selection.
     on(amountInputElement, "keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -312,7 +327,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     });
   }
 
-  /** Перечитує поле і оновлює рядок під ним. */
+  /** Re-reads the field and updates the line below it. */
   function refreshAmountPreview() {
     const parsedExpression = evaluateAmountExpression(amountInputElement.value);
     const isFieldEmpty = parsedExpression.status === "empty";
@@ -322,7 +337,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
     refreshSubmitAvailability();
 
-    if (isFieldEmpty || (parsedExpression.status === "valid" && !parsedExpression.isExpression)) {
+    if (isFieldEmpty || (parsedExpression.status === 'valid' && !parsedExpression.isExpression)) {
       setVisibility(amountPreviewElement, false);
       return;
     }
@@ -338,44 +353,46 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     setVisibility(amountPreviewElement, true);
   }
 
-  /* ── Категорії ────────────────────────────────────────────────────────── */
+  /* ── Categories ────────────────────────────────────────────────────────────── */
 
   /**
-   * Кнопка збереження сіра, поки немає що зберігати.
+   * Gray button while there is nothing to save.
    *
-   * Це не «зламаний» стан, а підказка: сіре каже «введіть суму».
-   * Якщо сума вже є, а категорії ні — кнопка вмикається, і про
-   * відсутню категорію скаже вже сама помилка валідації.
+   * This isn't a "broken" state, but a hint: no amount, so nothing
+   * to save. If the amount is already there, but no category — the button
+   * turns on, and the missing category will already be pointed out by
+   * the validation error.
    */
   function refreshSubmitAvailability() {
     const parsedExpression = evaluateAmountExpression(amountInputElement.value);
     const hasAmount = parsedExpression.status === "valid" && parsedExpression.value > 0;
 
-    // Сіра — це не поломка, а підказка: немає суми, тож немає чого
-    // зберігати. Якщо сума вже є, а категорії ні — кнопка вмикається,
-    // і про відсутню категорію скаже вже сама помилка валідації.
+    // Gray is not a failure, but a hint: no amount, so nothing
+    // to save. If the amount is already there, but no category — the button
+    // turns on, and the missing category will already be pointed out by
+    // the validation error.
     submitButtonElement.disabled = !hasAmount || !hasActiveCategories;
   }
 
   /**
-   * Які категорії бачить форма.
+   * Which categories the form sees.
    *
-   * Типово — лише активні: неактивних у з часом набирається, і вони
-   * лише засмічують форму. Але дві речі змушують їх показувати:
+   * Typically — only active ones: inactive ones accumulate, and they
+   * only clutter the form. But two things force them to be shown:
    *
-   *   категорія запису, який правиться, — обов'язково. Інакше форма
-   *     мовчки показала б порожній вибір під час запису, який цілком
-   *     видимий у списку: збереглося б старе значення, а людина не
-   *     бачила б, що саме вона змінює;
+   *   the category of the record being edited — required. Otherwise the form
+   *     would silently show an empty selection while editing, which is clearly
+   *     visible in the list: the old value would be kept, and the person
+   *     wouldn't see what they are changing;
    *
-   *   кнопка «показати всі» — коли людина вносить витрату за минулий
-   *     місяць, де потрібну категорію вже вимкнули.
+   *   the "show all" button — when the person enters an expense for the
+   *     previous month, where the required category was already disabled.
    *
-   * Список **не залежить від місяця**: якщо неактивна категорія
-   * трапляється в записах цього місяця, вона не піднімається до
-   * «тимчасово активних». Інакше список мигав би при перемиканні
-   * місяців, а людина не мала б змоги сказати, які категорії вона
-   * зараз бачить.
+   * The list **does not depend on the month**: if an inactive category
+   * appears in the records of this month, it is not raised to
+   * "temporarily active". Otherwise the list would blink when switching
+   * months, and the person wouldn't be able to say which categories they
+   * currently see.
    *
    * @param {Array<object>} categories
    * @returns {Array<object>}
@@ -390,9 +407,10 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Кнопка з'являється лише тоді, коли є що розкривати.
+   * Button appears only when there's something to unfold.
    *
    * @param {number} inactiveCount
+   *
    */
   function renderCategoryToggle(inactiveCount) {
     if (inactiveCount === 0) {
@@ -408,6 +426,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   /**
    * @param {Readonly<object>} state
+   *
    */
   function render(state) {
     renderCategoryChips(state.categories);
@@ -420,13 +439,14 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Показує лише активні категорії.
+   * Shows only active categories.
    *
-   * Якщо активних немає — порожньо й окреме пояснення. Категорій
-   * «про запас» немає: вони приховуються саме тоді, коли в них
-   * не записують, а ліміт на них не задають.
+   * If there are none — empty and a separate explanation. Categories
+   * "for the sake of it" are not there: they are hidden exactly when
+   * they are not being entered into, and no limit is set on them.
    *
    * @param {Array<object>} categories
+   *
    */
   function renderCategoryChips(categories) {
     const categoriesToRender = visibleCategories(categories);
@@ -434,8 +454,8 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
     clearChildren(categoryChipsElement);
 
-    // Без жодної категорії зберегти витрату неможливо, тож і кнопка
-    // не потрібна — інакше вона вела б у помилку валідації.
+    // Without any category, it's impossible to save, so no button
+    // is needed — otherwise it would lead to a validation error.
     const hasCategories = categoriesToRender.length > 0;
     hasActiveCategories = hasCategories;
     refreshSubmitAvailability();
@@ -451,10 +471,10 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
         attributes: { type: "button", role: "radio", "aria-checked": "false" },
       });
 
-      // Неактивна категорія лишається доступною — просто її видно
-      // інакше. Помітка потрібна, щоб не виглядало заблокованим:
-      // сірий текст означав би «не можна натиснути», а натиснути
-      // можна, хоча це рідко потрібно - випадок реальний.
+      // An inactive category remains available — just visibly
+      // and otherwise. The label is needed, so it doesn't look
+      // disabled: gray text would mean "cannot click", but
+      // you can click, even if it's rarely needed.
       if (!isCategorySelectable) {
         categoryChipElement.classList.add("chip--inactive");
         categoryChipElement.title = "Неактивна категорія — її вже не пропонують, але можна вибрати";
@@ -486,6 +506,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   /**
    * @param {string} categoryName
    * @param {Array<object>} categoriesToRender
+   *
    */
   function selectCategory(categoryName, categoriesToRender) {
     formState.selectedCategoryName = categoryName;
@@ -499,12 +520,13 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     }
   }
 
-  /* ── Валідація ────────────────────────────────────────────────────────── */
+  /* ── Validation ────────────────────────────────────────────────────────── */
 
   /**
    * @param {HTMLElement} inputElement
    * @param {HTMLElement} errorElement
    * @param {string} message
+   *
    */
   function showFieldError(inputElement, errorElement, message) {
     inputElement.setAttribute("aria-invalid", "true");
@@ -515,6 +537,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   /**
    * @param {HTMLElement} inputElement
    * @param {HTMLElement} errorElement
+   *
    */
   function clearFieldError(inputElement, errorElement) {
     inputElement.removeAttribute("aria-invalid");
@@ -523,6 +546,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   /**
    * @returns {{ isValid: boolean, draft: object | null }}
+   *
    */
   function collectAndValidate() {
     const parsedExpression = evaluateAmountExpression(amountInputElement.value);
@@ -559,11 +583,11 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     }
     clearFieldError(categoryChipsElement, categoryErrorElement);
 
-    const selectedTime = timeInputElement.value || undefined; // Для існуючих записі час може бути відсутнім
+    const selectedTime = timeInputElement.value || undefined; // For existing record, time may be missing
 
-    // Валідація формату часу: HH:MM (24-годинний)
-    // При зміні типу поля на "type=time", браузер відповідає за валідацію. 
-    // Наша перевірка тут не потрібна, але ми повинні скинути помилку у разі успішної корекції.
+    // Time format validation: HH:MM (24-hour)
+    // For type=time input, the browser handles validation.
+    // Our check is not needed here, but we must clear the error in case of successful correction.
     clearFieldError(timeInputElement, entryTimeErrorElement);
 
     return {
@@ -577,7 +601,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     };
   }
 
-  /* ── Надсилання ──────────────────────────────────────────────────────── */
+  /* ── Submission ────────────────────────────────────────────────────────── */
 
   /** @param {SubmitEvent} event */
   function handleSubmit(event) {
@@ -586,9 +610,9 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     const { isValid, draft } = collectAndValidate();
     if (!isValid) return;
 
-    // Смуга під кнопкою однакова для додавання й правки: вона каже
-    // не «що це за рядок», а «програма прийняла запис і відправила
-    // його в обробку». Тому з'являється в обох випадках.
+    // The status strip is the same for addition and edit: it tells
+    // not "what this row is", but "program accepted the record and sent
+    // it for processing". Thus it appears in both cases.
     rememberRecentEntry(draft);
 
     if (isEditing()) {
@@ -598,7 +622,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
     resetFormFields();
 
-    // Відправка йде у фоні. Якщо щось піде не так, статус допишемо.
+    // Submission happens in the background. If something goes wrong, we'll update the status.
     onSubmit(draft).then(({ deliveredImmediately, error }) => {
       renderRecentEntries();
       if (deliveredImmediately) return;
@@ -648,11 +672,12 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Ставить поточні дату й час у поля форми.
+   * Sets the current date and time in the form fields.
    *
-   * Дата береться з `toLocalIso`, а не з `toISOString()`: остання
-   * за контрактом переводить в UTC, а в Києві це з 00:00 до 03:00
-   * означає вчорашню дату — і жоден рефреш її не виправив би.
+   *
+   * Date is taken from `toLocalIso`, not from `toISOString()`: the latter
+   * converts to UTC, and in Kyiv, this means from 00:00 to 03:00
+   * it would show yesterday's date — and no refresh would have fixed it.
    */
   function refreshDateTimeFields() {
     const currentDateTime = toLocalIso(new Date());
@@ -664,12 +689,14 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Чи користувач ще нічого не вводив у цій формі.
+   * Whether the user has entered anything in this form yet.
    *
-   * Оновлення при поверненні на вкладку перезаписує поля, тож
-   * воно мусить пропускати форму, у якій уже щось є. «Щось
-   * ввела» — це не лише сума: ручна зміна дати теж має
-   * залишитися, бо людина могла навмисно вносити витрату за вчора.
+   *
+   * Returning to the tab updates the fields, so it must skip the form
+   * where something is already entered. "Something entered" is not only
+   * the amount: a manual change of the date should also remain, because
+   * a person might have intentionally entered an expense for yesterday,
+   * and it should not be overwritten.
    */
   function isFormUntouched() {
     if (isEditing()) return false;
@@ -680,11 +707,12 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Повернення на вкладку оновлює дату й час.
+   * Returning to the tab updates the date and time.
    *
-   * Поля живуть у формі, а не в розмітці: вони заповнюються під
-   * час ініціалізації. Тому вкладка, що пролежала годину, показує
-   * вчорашню дату й старий час, поки її не перезавантажити.
+   *
+   * The fields live in the form, not in the markup: they are filled
+   * during initialization. Therefore, a tab that sat for an hour
+   * shows yesterday's date and old time, until it is refreshed.
    */
   function initDateTimeRefresh() {
     on(document, "visibilitychange", () => {
@@ -694,18 +722,20 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     });
   }
 
-  /* ── Щойно записані ──────────────────────────────────────────────────── */
+  /* ── Recently saved ────────────────────────────────────────────────────── */
 
   /**
-   * Підтвердження, що запис дійшов, стоїть під кнопкою збереження —
-   * там, куди дивиться око просто після натискання. Інакше довелося
-   * б перемикатися на інший розділ, щоб перевірити, що вийшло.
+   * Confirmation that the record reached the server stands under the save button —
+   * where the eye looks immediately after the click. Otherwise, one
+   * would have to switch to another section to check if it worked.
    *
-   * Рядок тримається, поки запис у черзі, але щонайменше
-   * RECENT_ENTRY_MIN_VISIBLE_MS: інакше за мить синхронізації
-   * підтвердження зникало б раніше, ніж його встигли помітити.
+   *
+   * The line stays while the record is in the queue, but at least
+   * RECENT_ENTRY_MIN_VISIBLE_MS: otherwise a blink of synchronization
+   * would make the confirmation disappear faster than it could be noticed.
    *
    * @param {{ category: string, amount: number }} draft
+   *
    */
   function rememberRecentEntry(draft) {
     recentEntries = [
@@ -717,17 +747,19 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Чи відповідає рядок смуги оптимістичному запису зі стану.
+   * Whether the strip line matches the optimistic record from the state.
    *
-   * Звіряємо за вмістом, а не за id: id черги з'являється лише
-   * після відповіді сервера, а весь час синхронізації смуга мала б
-   * рахувати запис доставленим. Поле стану вже містить той самий
-   * чернетковий запис, тож збіг за сумою, категорією й датою
-   * достатній.
+   *
+   * We compare by content, not by id: the queue id only
+   * appears after the server's response, but during the whole
+   * synchronization period, the strip should show the record as
+   * delivered. The state already contains the same draft record,
+   * so a match by sum, category, and date is sufficient.
    *
    * @param {object} entry
    * @param {ReadonlyArray<object>} transactions
    * @returns {boolean}
+   *
    */
   function isStillPending(entry, transactions) {
     return transactions.some(
@@ -794,13 +826,16 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   /**
-   * Ставить таймер на найближчий строк дозрікання.
+   * Sets a timer for the nearest expiration of a strip.
    *
-   * Запису, який досі в черзі, таймер не потрібен: про нього нагадає
-   * наступний рендер стану. Тому таймер ставиться лише на синхронізовані
-   * рядки, для яких fifteen секунд — це жорсткий термін.
+   *
+   * For records still in the queue, the timer is not needed: the next
+   * state render will notify them. Therefore, the timer is only set
+   * for synchronized records, for which fifteen seconds — is a hard
+   * limit.
    *
    * @param {ReadonlyArray<object>} transactions
+   *
    */
   function scheduleRecentEntriesRefresh(transactions) {
     if (recentEntriesTimer !== null) {

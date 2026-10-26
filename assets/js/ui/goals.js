@@ -1,10 +1,12 @@
 /**
- * goals.js — вкладка «Цілі».
+ * goals.js — "Goals" tab.
  *
- * Показує список активних цілей з прогрес-баром та щомісячним вимогою.
- * Цілі завантажуються разом із знімком бюджету через budgetStore
- * (fetchBudgetSnapshot → fetchGoals на сервері).
- * Єдина клієнтська дія — коригування поточної суми через модальне вікно.
+ * Shows a list of active goals with a progress bar and a monthly requirement.
+ * Goals are loaded along with the budget snapshot via budgetStore
+ * (fetchBudgetSnapshot → fetchGoals on the server).
+ * The only client-side action — adjusting the current amount via a modal window.
+ *
+ *
  */
 
 import { budgetStore } from "../core/budgetStore.js";
@@ -17,14 +19,16 @@ const goalsContainer = document.getElementById("goals-container");
 const adjustModal = document.getElementById("goal-adjust-modal");
 
 /**
- * Відображає вкладку «Цілі».
+ * Displays the "Goals" tab.
+ *
+ *
  */
 export async function showGoalsTab() {
   document.body.dataset.tab = TAB_ID;
 
   if (!goalsContainer) return;
 
-  // Завантажуємо місяць — цілі приходять разом із знімком бюджету
+  // Load the month — goals come with the budget snapshot
   const periodKey = currentPeriodKey();
   await budgetStore.loadPeriod(periodKey);
   const snapshot = budgetStore.getState();
@@ -33,7 +37,9 @@ export async function showGoalsTab() {
 }
 
 /**
- * Зберегти коригування: sign = 1 для додавання, -1 для віднімання.
+ * Save adjustment: sign = 1 for addition, -1 for subtraction.
+ *
+ *
  */
 async function saveAdjust(sign) {
   const amountInput = document.getElementById("adjust-input");
@@ -108,7 +114,7 @@ function openAdjustModal(goal) {
     adjustInput.value = "";
     adjustInput.dataset.goalId = goal.id;
   }
-  // Використовуємо setAttribute для спрощення управління станом
+  // Use setAttribute for easier state management
   adjustModal.removeAttribute("hidden");
   adjustModal.classList.add("show");
 }
@@ -120,7 +126,9 @@ function closeAdjustModal() {
 }
 
 /**
- * Подія на динамічно створеній кнопці «Коригувати» (делегування через контейнер).
+ * Event on the dynamically created "Adjust" button (delegation through the container).
+ *
+ *
  */
 if (goalsContainer) {
   goalsContainer.addEventListener("click", (e) => {
@@ -134,25 +142,25 @@ if (goalsContainer) {
   });
 }
 
-// Кнопка «Додати» в модальному вікні коригування
+// "Add" button in the adjustment modal
 const addBtn = document.getElementById("adjust-add-btn");
 if (addBtn) {
   addBtn.addEventListener("click", () => saveAdjust(1));
 }
 
-// Кнопка «Відняти» в модальному вікні коригування
+// "Subtract" button in the adjustment modal
 const subtractBtn = document.getElementById("adjust-subtract-btn");
 if (subtractBtn) {
   subtractBtn.addEventListener("click", () => saveAdjust(-1));
 }
 
-// Кнопка «Хрестик» закриває поп-ap
+// "Cross" button closes the pop-up
 const cancelBtn = document.getElementById("cancel-adjust-btn");
 if (cancelBtn) {
   cancelBtn.addEventListener("click", closeAdjustModal);
 }
 
-// Закриття модального вікна при кліку поза ним
+// Closing the modal on click outside
 adjustModal?.addEventListener("click", (e) => {
   if (e.target === adjustModal) closeAdjustModal();
 });
@@ -162,9 +170,11 @@ document.addEventListener("keydown", (e) => {
 });
 
 /**
- * Ескейтує HTML-спеціальні символи.
+ * Escapes HTML special characters.
+ *
  * @param {string} text
  * @returns {string}
+ *
  */
 function escapeHtml(text) {
   const div = document.createElement("div");

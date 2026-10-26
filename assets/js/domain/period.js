@@ -1,96 +1,111 @@
 /**
- * period.js — робота з місяцями як з ключами «РРРР-ММ».
- * Єдине місце, де живе календарна математика.
+ * period.js — handling months as "YYYY-MM" keys.
+ * The single place where calendar math lives.
+ *
+ *
  */
-
 /**
  * @param {Date} [referenceDate]
- * @returns {string} ключ поточного місяця, наприклад «2026-10»
+ * @returns {string} current month key, e.g., "2026-10"
+ *
+ *
  */
 export function currentPeriodKey(referenceDate = new Date()) {
   const year = referenceDate.getFullYear();
   const month = String(referenceDate.getMonth() + 1).padStart(2, "0");
   return `${year}-${month}`;
 }
-
+ 
 /**
- * @param {string} periodKey — «2026-10»
+ * @param {string} periodKey — "2026-10"
  * @param {number} offsetInMonths
  * @returns {string}
+ *
+ *
  */
 export function shiftPeriodKey(periodKey, offsetInMonths) {
   const [year, month] = periodKey.split("-").map(Number);
   const shiftedDate = new Date(year, month - 1 + offsetInMonths, 1);
   return currentPeriodKey(shiftedDate);
 }
-
+ 
 /**
- * Скільки днів уже минуло в місяці станом на сьогодні.
- * Для завершених місяців — повна довжина, для майбутніх — нуль.
+ * How many days have already passed in the month as of today.
+ * For completed months — full length, for future ones — zero.
  *
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {number}
+ *
+ *
  */
 export function elapsedDaysInPeriod(periodKey, referenceDate = new Date()) {
   if (periodKey === currentPeriodKey(referenceDate)) {
     return referenceDate.getDate();
   }
-
+ 
   return periodKey < currentPeriodKey(referenceDate) ? daysInPeriod(periodKey) : 0;
 }
-
+ 
 /**
  * @param {string} periodKey
  * @returns {number} 28 | 29 | 30 | 31
+ *
+ *
  */
 export function daysInPeriod(periodKey) {
   const [year, month] = periodKey.split("-").map(Number);
   return new Date(year, month, 0).getDate();
 }
-
+ 
 /**
- * Скільки днів залишилося до кінця місяця включно з сьогоднішнім.
+ * How many days are left until the end of the month, including today.
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {number}
+ *
+ *
  */
 export function remainingDaysInPeriod(periodKey, referenceDate = new Date()) {
   const totalDays = daysInPeriod(periodKey);
   const elapsedDays = elapsedDaysInPeriod(periodKey, referenceDate);
   return Math.max(totalDays - elapsedDays, 0);
 }
-
+ 
 /**
- * Чи збігається місяць із поточним — від цього залежить,
- * чи показувати «прогноз на кінець місяця».
+ * Does the month match the current one — this determines whether
+ * to show the "end of month projection".
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {boolean}
+ *
+ *
  */
 export function isCurrentPeriod(periodKey, referenceDate = new Date()) {
   return periodKey === currentPeriodKey(referenceDate);
 }
-
+ 
 /**
- * Локальний час у форматі, який приймають поля дати й часу:
- * «2026-10-17T02:49». Дата — перші 10 символів, час — наступні 5.
+ * Local time in the format acceptable by date and time fields:
+ * "2026-10-17T02:49". Date — first 10 chars, time — next 5.
  *
- * **Єдине місце у проєкті, де будується локальний час для екрана.**
- * Причина, чому воно одне: `toISOString()` за контрактом завжди
- * переводить в UTC — це не наш вибір, а поведінка методу. У Києві
- * (UTC+3) о 00:30 він поверне вчорашню дату, і жодне
- * перезавантаження її не виправить, бо кожне рахуватиме те саме.
- * Тому беремо локальні поля об'єкта `Date`, а не конвертуємо.
+ * **The single place in the project where local time is built for the screen.**
+ * The reason it's only here: `toISOString()` by contract always
+ * converts to UTC — this is not our choice, but the method's behavior. In Kyiv
+ * (UTC+3) at 00:30 it would return yesterday's date — and no refresh would
+ * fix it, because every refresh would calculate the same thing.
+ * Therefore, we take local fields from the `Date` object, not convert them.
  *
- * Секунди не потрібні: у колонці `Дата` лежить `РРРР-ММ-ДДГГ:ХХ`.
+ * Seconds are not needed: in the `Date` column, `YYYY-MM-DDHH:MM` is stored.
  *
- * Для міток, які нікуди не виводяться (`recordedAt`,
- * `lastSyncedAt`), UTC лишається правильним — там важлива
- * монотонність рядка, а не місцевий час.
+ * For labels that are not output anywhere (`recordedAt`,
+ * `lastSyncedAt`), UTC remains correct — there, string monotonicity is
+ * what matters, not the local time.
  *
  * @param {Date} [referenceDate]
  * @returns {string}
+ *
+ *
  */
 export function toLocalIso(referenceDate = new Date()) {
   const year = referenceDate.getFullYear();
