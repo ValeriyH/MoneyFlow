@@ -1,4 +1,4 @@
-# Test Scenarios (Сценарії для перевірки)
+# Test Scenarios
 
 These scenarios are designed to be verified during development and testing to ensure core logic and UX patterns remain intact.
 
@@ -8,14 +8,14 @@ These scenarios are designed to be verified during development and testing to en
 3. **Time-Based Proof**: Verify that a captured `proof` from a previous session cannot be reused (due to timestamp expiration).
 4. **Session Expiration**: Verify that a session token expires after the defined TTL.
 5. **Admin Override**: Verify that deleting `moneyflow.loginAttempts` allows immediate login after failures.
-
+ 
 ## Sync & Queue
 6. **Offline Persistence**: Verify that entries made while offline persist in `localStorage` and sync automatically once the network is restored.
 7. **Queue Isolation**: Verify that a queue for "User A" is never accessible or mergeable with "User B".
 8. **Session Expiry Behavior**: Verify that `SESSION_EXPIRED` clears the queue? (Wait, checking deprecated: "SESSION_EXPIRED (не стирає чергу), UNAUTHORIZED (стирає)"). 
 9. **Duplicate Prevention**: Verify that repeating the "Save" action on the same entry while in the queue does not create duplicate entries.
 10. **Sync Retry**: Verify that clicking the sync indicator "kicks" a stuck sync process.
-
+ 
 ## Budget & Snapshots
 11. **Current Month focus**: Verify that the `limitPeriod` is always included in the calculation regardless of other periods.
 12. **Three-Month Limit**: Verify that older cached snapshots are automatically trimmed.
@@ -23,7 +23,7 @@ These scenarios are designed to be verified during development and testing to en
 14. **Budget Calculation**: Verify that `Balance = Budget - Total Expenses` and that `Budget` is the sum of `Limits`.
 15. **Active Category Filter**: Verify that categories with `Active = False` are hidden from the entry form but remain in the list.
 16. **Limit Miss**: Verify that a category without a row in `BudgetLimits` is shown in the form and allowed to have an entry but isn't included in the budget sum.
-
+ 
 ## UI & UX
 17. **Mobile Compact View**: Verify that on screens ≤ 899px, the form is collapsed and expands only when the sum field is focused or has text.
 18. **Success Visibility**: Verify that a "Saved" or "Pending" status remains visible for at least 15 seconds.
@@ -34,7 +34,7 @@ These scenarios are designed to be verified during development and testing to en
 23. **Comment Handling**: Verify that comments are rendered on a separate line in the transaction list.
 24. **Edit Logic**: Verify that editing a planned/queued entry updates the "draft" in the queue without sending many `update` requests to the server.
 25. **Query Merge**: Verify that adding a transaction calls `addTransaction` and returns a new snapshot, which provides the updated "Balance" immediately.
-
+ 
 ## Edge Cases
 26. **Timezone Isolation**: Verify that `toISOString()` is avoided for date fields to prevent UTC-shift errors in Kiev time.
 27. **Empty Data State**: Verify that an empty month (no limits/transactions) shows "Loading..."/Empty states instead of just zeroes.

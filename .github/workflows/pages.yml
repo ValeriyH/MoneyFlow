@@ -1,77 +1,77 @@
 name: Deploy to GitHub Pages
 
-# Адреса Google Apps Script НЕ живе в репозиторії. Секрет
-# APPS_SCRIPT_ENDPOINT зберігається тут: Settings -> Secrets and
+# The Google Apps Script address does not live in the repository. The secret
+# APPS_SCRIPT_ENDPOINT is stored in: Settings -> Secrets and
 # variables -> Actions -> New repository secret.
 #
-# Що це дає:
-#   URL не потрапить у git-історію       - так
-#   URL не видно в самому репозиторії    - так
-#   URL не видно на сторінці github.io   - ні, там лежить зібраний env.js
+# What this provides:
+#   The URL will not enter the git history       - yes
+#   The URL is not visible in the repository itself    - yes
+#   The URL is not visible on the github.io page   - no, the assembled env.js is there
 #
-# Третій рядок навмисний: адреса не секрет і секретом бути не
-# може - вона лежить у env.js, який браузер завантажує щонаразу.
-# Секрет захищає не від подиву, а від копії репозиторію.
+# The third line is intentional: the address is not a secret and cannot be
+# a secret - it lives in env.js, which is loaded by the browser every time.
+# The secret protects not from curiosity, but from a copy of the repository.
 #
-# Якби env.js лежав у git, клон або вилка підняли б сайт, який
-# стукає у цю таблицю. У бюджет нічого б не потрапило - своїх
-# паролів у копії немає. Страждав би ендпоинт входу: вхід і
-# реєстрація сесії не потребують, тож кожна чужа спроба увійти
-# плюсується до спільного лічильника й блокує вхід сім'ї на 15
-# хвилин.
+# If env.js were in git, a clone or fork would launch the site, which
+# hits this table. Nothing would be lost in the budget - there are no
+# passwords in the copy. The login endpoint would suffer: login and
+# session registration would not be required, so every unauthorized attempt
+# would be added to the common counter and block access for the family for 15
+# minutes.
 #
-# З секретом копія просто не збирається: крок нижче падає на
-# порожньому секреті.
-
+# With the secret, the copy is simply not assembled: the step below fails on
+# an empty secret.
+ 
 on:
   push:
     branches: [master]
   workflow_dispatch:
-
+ 
 permissions:
   contents: read
   pages: write
   id-token: write
-
+ 
 concurrency:
   group: pages
   cancel-in-progress: true
-
+ 
 jobs:
   build-and-deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
+ 
     runs-on: ubuntu-latest
-
+ 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
+ 
       - name: Configure Pages
         uses: actions/configure-pages@v5
-
+ 
       - name: Build environment file from secret
         env:
           APPS_SCRIPT_ENDPOINT: ${{ secrets.APPS_SCRIPT_ENDPOINT }}
         run: |
           set -eu
           mkdir -p assets/js/generated
-
+ 
           if [ -z "${APPS_SCRIPT_ENDPOINT}" ]; then
             echo "::error::Secret APPS_SCRIPT_ENDPOINT is not set. Add it in repo settings."
             exit 1
           fi
-
+ 
           printf 'window.__MONEYFLOW_ENV__ = { APPS_SCRIPT_ENDPOINT: "%s" };\n' \
             "$APPS_SCRIPT_ENDPOINT" > assets/js/generated/env.js
-
+ 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: '.'
-
+ 
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

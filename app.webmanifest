@@ -8,11 +8,11 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-
-  "// background_color": "Екран запуску. Темний навмисно: маніфест читається один раз, під час встановлення, тож змінити його з коду неможливо. Темна смуга на світлій схемі очі не ріже, а навпаки.",
+  
+  "// background_color": "Splash screen. Dark intentionally: manifest is read once during installation, so changing it from code is impossible. Dark strip on light scheme doesn't hurt eyes, and vice versa.",
   "background_color": "#0d1014",
-
-  "// theme_color": "Колір панелей встановленого застосунку. Оновлюється з meta[name=theme-color] під час роботи, але на старті Android бере саме це значення.",
+  
+  "// theme_color": "Color of the installed app's panels. Updated from meta[name=theme-color] during operation, but at startup Android takes this very value.",
   "theme_color": "#0d1014",
   "icons": [
     {

@@ -11,7 +11,7 @@
  * tied to the moment in time, which the server accepts only once.
  *
  *
- */
+ *  */
 
 import { APPS_SCRIPT_ENDPOINT, REQUEST_TIMEOUT_MS } from "../config.js";
 
@@ -32,7 +32,8 @@ export const API_ERROR_CODE = {
  * @typedef {object} Viewer
  * @property {string} name
  * @property {string} color
- */
+ *
+ * */
 
 /**
  * Category along with the limit for the requested month.
@@ -46,7 +47,7 @@ export const API_ERROR_CODE = {
  * @property {number} limit — limit for limitPeriod, 0 if not set
  *
  *
- */
+ *  */
 
 /**
  * Goal — accumulation or project.
@@ -64,7 +65,7 @@ export const API_ERROR_CODE = {
  * @property {number} monthlyRequirement — how much needs to be saved/spent monthly, calculated on the server
  *
  *
- */
+ *  */
 
 /**
  * A single transaction. pending is not in the snapshot — it is a client copy
@@ -81,7 +82,7 @@ export const API_ERROR_CODE = {
  * @property {boolean} [pending]
  *
  *
- */
+ *  */
 
 /**
  * Budget snapshot. periods — the months the server actually
@@ -96,7 +97,7 @@ export const API_ERROR_CODE = {
  * @property {Array<Goal>} goals
  *
  *
- */
+ *  */
 
 /** Codes that require showing the login screen.
  *
@@ -106,7 +107,8 @@ export const API_ERROR_CODE = {
  *
  * @property {number[]} AUTH_FAILURE_CODES
  *
- */
+ *
+ *  */
 export const AUTH_FAILURE_CODES = [
   API_ERROR_CODE.unauthorized,
   API_ERROR_CODE.sessionExpired,
@@ -156,7 +158,8 @@ export class ApiError extends Error {
  * @param {{ action: string, sessionToken?: string, [key: string]: unknown }} command
  * @returns {Promise<object>} see the list of forms above
  *
- */
+ *
+ *  */
 async function sendCommand({ action, sessionToken, ...payload }) {
   const abortController = new AbortController();
   const timeoutHandle = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT_MS);
@@ -220,7 +223,8 @@ async function sendCommand({ action, sessionToken, ...payload }) {
  * @param {unknown} error
  * @returns {ApiError}
  *
- */
+ *
+ *  */
 function normalizeTransportError(error) {
   if (error instanceof ApiError) return error;
 
@@ -247,7 +251,8 @@ function normalizeTransportError(error) {
  * @param {{ login: string, proof: string, timestamp: number }} credentials
  * @returns {Promise<{ token: string, expiresAt: number, serverTime: number }>}
  *
- */
+ *
+*  */
 export function openSession({ login, proof, timestamp }) {
   return sendCommand({ action: "authenticate", login, proof, timestamp });
 }
@@ -264,7 +269,8 @@ export function openSession({ login, proof, timestamp }) {
  * but the account is not yet active — it's enabled by an administrator in the table
  *
  *
- */
+*
+*  */
 export function requestUserRegistration(login, passwordHash) {
   return sendCommand({ action: "requestRegistration", login, passwordHash });
 }
@@ -278,8 +284,8 @@ export function requestUserRegistration(login, passwordHash) {
  *
  * `limitPeriod` — separately, and it's not a coincidence. Transactions are
  * needed for two months (open and previous — for comparison), and limits
- * should be only for the open one. Otherwise, the October limit would be
- * shown in September as well, where it wasn't set.
+* should be only for the open one. Otherwise, the October limit would be
+* shown in September as well, where it wasn't set.
  *
  * @param {string} sessionToken
  * @param {Array<string>} periods
@@ -288,7 +294,8 @@ export function requestUserRegistration(login, passwordHash) {
 * the server actually read
 *
 *
- */
+*
+*  */
 export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
   return sendCommand({ action: "loadSnapshot", sessionToken, periods, limitPeriod });
 }
@@ -306,7 +313,8 @@ export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
 * by them that the record is removed from the queue, not by the queue's `id`
 *
 *
- */
+*
+*  */
 export function submitTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
 }
@@ -318,10 +326,11 @@ export function submitTransaction(sessionToken, transactionPayload, periods, lim
  * @param {string} transactionId
  * @param {Array<string>} periods
  * @param {string} limitPeriod
- * @returns {Promise<{ deletedId: string, snapshot: BudgetSnapshot }>}
- *
- *
- */
+* @returns {Promise<{ deletedId: string, snapshot: BudgetSnapshot }>}
+*
+*
+*
+*  */
 export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
   return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
 }
@@ -342,7 +351,8 @@ export function deleteTransaction(sessionToken, transactionId, periods, limitPer
 * returns what actually remains in the row, not an echo from the payload.
 *
 *
- */
+*
+*  */
 export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
   return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
 }

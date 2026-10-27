@@ -1,25 +1,25 @@
 ﻿<#
 .SYNOPSIS
-    Збирає MoneyFlow у папку deploy для будь-якого статичного хостингу.
+    Builds MoneyFlow into the deploy folder for any static hosting.
 
 .DESCRIPTION
-    GitHub Pages — не єдина платформа для статичного сайту. Скрипт
-    готує звичайну теку з файлами, яку можна віддати будь-куди:
-    Netlify, Cloudflare Pages, Vercel, Firebase Hosting, власний nginx
-    або просто тека, яку вивантажують вручну.
+    GitHub Pages is not the only platform for a static site. This script
+    prepares a standard folder with files that can be sent anywhere:
+    Netlify, Cloudflare Pages, Vercel, Firebase Hosting, your own nginx,
+    or simply a folder uploaded manually.
 
-    Папка deploy/ перезаписується щоразу: старий вміст не має
-    залишатися, бо забутий модуль у браузері працює як застарілий
-    код, а помилки через це не видно.
+    The deploy/ folder is overwritten every time: old content must not
+    remain because a forgotten module in the browser acts like stale
+    code, and errors due to this are not visible.
 
-    Адреса бекенда не живе в git, а генерується з
-    tools/local-endpoint.txt - те саме, що робить serve.ps1.
+    The backend address is not in git, but is generated from
+    tools/local-endpoint.txt - exactly what serve.ps1 does.
 
-    УВАГА: файл зберігається з BOM. Windows PowerShell 5.1 інакше
-    прочитає кирилицю в OEM-кодуванні й зламає розбір команд.
+    CAUTION: This file is saved with BOM. Windows PowerShell 5.1 otherwise
+    reads Cyrillic in OEM encoding and breaks command parsing.
 
 .PARAMETER OutputDir
-    Папка призначення відносно кореня проєкту. За замовчуванням deploy.
+    Target folder relative to the project root. Default is deploy.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/deploy.ps1
@@ -33,13 +33,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
-# ── Що потрібно на сервері ─────────────────────────────────────────────────
+# ── What is needed on the server ──────────────────────────────────────────
 #
-# Перелік навмисно повний і не читається з каталогу: у deploy не
-# мають потрапити ні apps-script (вихідні коди Google), ні tools,
-# ні документація, ні локальні паролі. Скрипт, що сам себе
-# розширює («скопіюй усе, крім .git»), одного разу скопіює
-# local-pass.txt - і тоді його нема.
+# The list is intentionally complete and not read from a directory:
+# apps-script (Google's source code), tools, documentation, and
+# local passwords must NOT end up in deploy. A script that expands
+# itself ("copy all except .git") would copy local-pass.txt just
+# once - and then it's gone.
 
 $rootFiles = @(
     'index.html'
@@ -51,7 +51,7 @@ $directories = @(
     'assets'
 )
 
-# ── Адреса бекенда ─────────────────────────────────────────────────────────
+# ── Backend address ─────────────────────────────────────────────────────────
 
 $localEndpointFile = Join-Path $PSScriptRoot 'local-endpoint.txt'
 $generatedEnvFile  = Join-Path $projectRoot 'assets\js\generated\env.js'
@@ -83,7 +83,8 @@ else {
     exit 1
 }
 
-# ── Чистимо теку призначення ───────────────────────────────────────────────
+# ── Clean target folder ─────────────────────────────────────────────────────
+#
 
 $targetDir = Join-Path $projectRoot $OutputDir
 
@@ -94,7 +95,7 @@ if (Test-Path -LiteralPath $targetDir) {
 
 New-Item -ItemType Directory -Path $targetDir | Out-Null
 
-# ── Копіюємо ───────────────────────────────────────────────────────────────
+# ── Copy files ───────────────────────────────────────────────────────────────
 
 foreach ($fileName in $rootFiles) {
     $source = Join-Path $projectRoot $fileName
@@ -116,7 +117,8 @@ foreach ($directoryName in $directories) {
     Copy-Item -LiteralPath $source -Destination $targetDir -Recurse
 }
 
-# ── Перевірка результату ───────────────────────────────────────────────────
+# ── Verify results ──────────────────────────────────────────────────────────
+#
 
 $copiedFiles = Get-ChildItem -LiteralPath $targetDir -Recurse -File
 $copiedBytes = ($copiedFiles | Measure-Object -Property Length -Sum).Sum
