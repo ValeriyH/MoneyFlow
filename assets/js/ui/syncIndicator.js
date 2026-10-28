@@ -32,14 +32,19 @@ function stateForError() {
 }
 
 /**
- * Priority: work in progress, then a delivery failure (records are at
- * stake), then a load failure, then waiting records, then all clear.
+ * Priority: records being sent, then a budget load, then a delivery
+ * failure (records are at stake), then a load failure, then waiting
+ * records, then all clear.
+ *
+ * Sending is shown as the queue («Черга: N», yellow), not as loading
+ * (grey): the person must see that their records are still on the way.
  *
  * @param {SyncSources} sources
  * @returns {{ state: string, error: Error | null }}
  */
 function resolveSyncState({ budget, queue }) {
-  if (queue.isSending || budget.isLoading) return { state: SYNC_STATE.loading, error: null };
+  if (queue.isSending && queue.pendingCount > 0) return { state: SYNC_STATE.pending, error: null };
+  if (budget.isLoading) return { state: SYNC_STATE.loading, error: null };
   if (queue.lastError && queue.pendingCount > 0) return { state: stateForError(queue.lastError), error: queue.lastError };
   if (budget.loadError) return { state: stateForError(budget.loadError), error: budget.loadError };
   if (queue.pendingCount > 0) {

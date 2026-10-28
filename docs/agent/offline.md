@@ -38,7 +38,7 @@ Each part answers only for itself (single responsibility):
 - `budgetStore` — the budget: snapshot, expenses view, `isLoading` / `loadError` of snapshot requests, `reload()`.
 - `goalStore` — goals and their history.
 - `main.js` (Dispatcher) — orders them: `synchronizeAll()` = `transactionQueue.flush()`, then `budgetStore.reload()` only if nothing was delivered (a delivery already brings the snapshot). Used on start, manual sync, `online` event, tab return after 3 min, login. Auth failures, toasts and the login screen are handled here.
-- `syncIndicator` — combines the two sources (`budget`, `queue`) into one state: loading (sending or loading) → delivery failure with queued records → load failure → pending → synced; any failure while `navigator.onLine` is false shows as offline.
+- `syncIndicator` — combines the two sources (`budget`, `queue`) into one state: sending with queued records → pending («Черга: N», yellow) → budget loading (grey) → delivery failure with queued records → load failure → pending → synced; any failure while `navigator.onLine` is false shows as offline.
 
 Also flushed on every expense / goal action and on opening the Goals tab.
 
