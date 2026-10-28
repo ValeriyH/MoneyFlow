@@ -165,6 +165,12 @@ powershell -ExecutionPolicy Bypass -File tools/serve.ps1 -Port 8080 -NoBrowser
    [.github/workflows/pages.yml](.github/workflows/pages.yml) збере файл
    `env.js` з секрету й опублікує сайт.
 
+Публікується лише потрібне браузеру: `index.html`, `app.webmanifest`,
+`sw.js`, `robots.txt` і `assets/` (той самий список, що в `deploy.cmd`).
+Папки `apps-script/`, `tools/`, `docs/` та `AGENTS.md` на сайт не потрапляють.
+Якщо додаєте в корінь новий файл для браузера, додайте його і в
+[tools/deploy.ps1](tools/deploy.ps1), і в крок `Assemble site folder`.
+
 APPS_SCRIPT_ENDPOINT єдина змнінна яка вказує де знаходитьс бекенд.
 Її треба виставляти вручну один раз. Наступні деплої не потребують її зміни,
 якщо адреса бекенду не міняється.
@@ -189,6 +195,7 @@ deploy\
   index.html
   app.webmanifest
   sw.js            ← обов'язково поруч з index.html
+  robots.txt       ← забороняє індексацію пошуковиками
   assets\
 ```
 
@@ -429,6 +436,7 @@ deploy.cmd                   подвійний клік - збірка теки
 index.html                   розмітка: форма, дашборд, транзакції
 app.webmanifest              PWA: назва, іконки, режим standalone
 sw.js                        офлайн-оболонка (корінь - щоб охоплював сайт)
+robots.txt                   забороняє індексацію пошуковиками (разом з noindex в index.html)
 assets/
   css/
     base.css                 скидання, дизайн-токени, типографіка

@@ -26,6 +26,9 @@ const SHEET_CATEGORIES = 'Categories';
 const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
 const SHEET_GOALS = 'Goals';
+// Upper bound for one adjustment: protects the sheet from absurd values (1e308, Infinity).
+const MAX_GOAL_ADJUSTMENT = 1000000000;
+const GOAL_LOCK_TIMEOUT_MS = 10000;
 
 /**
  * Timezone for all dates and times.
@@ -212,7 +215,7 @@ function doPost(request) {
       case 'fetchGoals':
         return respondWithJson({
           ok: true,
-          goals: fetchGoals(viewer, periods),
+          goals: fetchGoals(viewer),
         });
 
       case 'adjustGoal':
@@ -325,7 +328,7 @@ function buildSnapshot(viewer, periods, limitPeriod) {
     categories: readCategoriesWithLimits([limitPeriod]),
     periods: periods,
     transactions: readTransactions(periods),
-    goals: fetchGoals(viewer, periods)
+    goals: fetchGoals(viewer)
   };
 }
 
@@ -1463,24 +1466,29 @@ function calculateGoalProgress(currentAmount, targetAmount) {
  * @returns {number} monthly amount, or 0 if the deadline has passed or the goal is reached
  */
 function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, deadline) {
-  const start = new Date(beginDate);
-  const end = new Date(deadline);
-  const now = new Date();
+  // Dates are compared as «YYYY-MM-DD» strings in the script timezone:
+  // new Date('YYYY-MM-DD') is parsed as UTC, and local getters would then
+  // shift the month for timezones behind UTC.
+  const isoPattern = /^(\d{4})-(\d{2})-(\d{2})/;
+  const beginMatch = String(beginDate || '').match(isoPattern);
+  const deadlineMatch = String(deadline || '').match(isoPattern);
 
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return 0;
+  if (!beginMatch || !deadlineMatch) return 0;
   if (currentAmount >= targetAmount) return 0;
 
-  // Start of accumulation = Max(begindate, now) — if the start date has passed, we start now
-  const actualStart = start > now ? start : now;
-  
+  const today = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+
   // If the deadline has already passed — return 0
-  if (end < now) return 0;
+  if (deadlineMatch[0] < today) return 0;
+
+  // Start of accumulation = Max(begindate, today) — if the start date has passed, we start now
+  const startMatch = (beginMatch[0] > today ? beginMatch[0] : today).match(isoPattern);
 
   const remainingAmount = targetAmount - currentAmount;
-  
+
   // Count months from the start of accumulation to the deadline
-  const monthsDiff = (end.getFullYear() - actualStart.getFullYear()) * 12 + 
-                     (end.getMonth() - actualStart.getMonth());
+  const monthsDiff = (Number(deadlineMatch[1]) - Number(startMatch[1])) * 12 +
+                     (Number(deadlineMatch[2]) - Number(startMatch[2]));
   
   // If months < 1 — calculate as for 1 month
   const divisor = Math.max(1, monthsDiff);
@@ -1494,11 +1502,9 @@ function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, dea
  * Retrieves the list of active goals for the user.
  *
  * @param {BudgetUser} viewer
- * @param {Array<string>} periods — ключі «РРРР-ММ» (не використовується, але зберігаємо для сумісності)
  * @returns {Array<object>} список цілей з розрахунками прогресу та щомісячної суми
  */
-function fetchGoals(viewer, periods) {
-  const sheet = getRequiredSheet(SHEET_GOALS);
+function fetchGoals(viewer) {
   const records = readSheetAsRecords(SHEET_GOALS, REQUIRED_GOAL_COLUMNS);
   
   return records
@@ -1531,30 +1537,57 @@ function fetchGoals(viewer, periods) {
  * @returns {object} оновлена ціль
  */
 function adjustGoal(payload, viewer) {
-  const sheet = getRequiredSheet(SHEET_GOALS);
-  const indexByName = readSheetHeader(sheet).index;
-  const idColumnIndex = indexByName.get(HEADER_GOAL_ID.toLowerCase());
-  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
-  const beginColumnIndex = indexByName.get(HEADER_GOAL_BEGIN_DATE.toLowerCase());
-  
-  const rowIndex = findGoalRowIndexById(sheet, payload.id, indexByName);
-  if (rowIndex === -1) {
-    throw new RequestError('Ціль з таким ID не знайдено', 'BAD_REQUEST');
+  const adjustment = Number(payload.amount);
+  if (!isFinite(adjustment) || adjustment === 0 || Math.abs(adjustment) > MAX_GOAL_ADJUSTMENT) {
+    throw new RequestError('Некоректна сума коригування', 'BAD_REQUEST');
   }
 
-  const currentAmount = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
-  const adjustment = Number(payload.amount) || 0;
-  const newAmount = Math.max(0, currentAmount + adjustment);
+  const sheet = getRequiredSheet(SHEET_GOALS);
+  const indexByName = readSheetHeader(sheet).index;
+  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
 
-  sheet.getRange(rowIndex, currentColumnIndex + 1).setValue(newAmount);
+  // Read-modify-write of the cell: without the lock two simultaneous
+  // adjustments read the same value and one of them is lost.
+  const lock = LockService.getScriptLock();
+  lock.waitLock(GOAL_LOCK_TIMEOUT_MS);
 
+  try {
+    const rowIndex = findGoalRowIndexById(sheet, payload.id, indexByName);
+    if (rowIndex === -1) {
+      throw new RequestError('Ціль з таким ID не знайдено', 'BAD_REQUEST');
+    }
+
+    const currentAmount = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
+    const newAmount = Math.max(0, Math.round((currentAmount + adjustment) * 100) / 100);
+
+    sheet.getRange(rowIndex, currentColumnIndex + 1).setValue(newAmount);
+    SpreadsheetApp.flush();
+
+    return buildAdjustedGoal(sheet, rowIndex, indexByName, payload.id);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Reads back the adjusted goal row and calculates its progress.
+ *
+ * @param {Sheet} sheet
+ * @param {number} rowIndex — 1-based row number
+ * @param {Map<string, number>} indexByName
+ * @param {string} id
+ * @returns {object} { id, progress, monthlyRequirement }
+ */
+function buildAdjustedGoal(sheet, rowIndex, indexByName, id) {
+  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
+  const beginColumnIndex = indexByName.get(HEADER_GOAL_BEGIN_DATE.toLowerCase());
   const updatedCurrent = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
   const target = toPositiveNumber(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_TARGET_AMOUNT.toLowerCase()) + 1).getValue());
   const begin = toIsoDate(sheet.getRange(rowIndex, beginColumnIndex + 1).getValue());
   const deadline = toIsoDate(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_DEADLINE.toLowerCase()) + 1).getValue());
 
   return {
-    id: payload.id,
+    id: id,
     progress: calculateGoalProgress(updatedCurrent, target),
     monthlyRequirement: calculateMonthlyRequirement(updatedCurrent, target, begin, deadline),
   };

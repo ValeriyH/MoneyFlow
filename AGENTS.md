@@ -27,13 +27,14 @@ Agents.md and docs/agent/ references are designed to optimize context usage and 
     - **Two people working**: The owner also writes code. Unfamiliar code might be a deliberate change, not a bug. Ask before "fixing."
     - **Speak up**: Report errors and out-of-scope changes immediately. Don't try to fix them silently.
     - **Ask, don't push**: Questions from the owner are for exploring options. Report possibilities and consequences, but don't push for a decision.
+    - **Git is the owner's**: Do not change repository state (no commit, merge, checkout, branch, stash, reset, push, fetch). Read-only commands (`status`, `log`, `diff`, `show`, `blame`) are allowed only for review. Do not offer to commit or merge.
 - **Coding Standards**:
     - **Comments**: Explain *why*, not *what*.
     - **Exports**: Every exported function *must* have a `@returns` tag.
 - **Critical Tech Rules**:
     - **Fetch**: Always check `response.ok`. A 5xx error is a failed request, not a caught exception.
     - **Timezones**: Avoid `toISOString()` for local dates (it shifts to UTC). Use local getters (`getHours()`, etc.).
-    - **Ownership**: New entities must have a defined owner (Login, Browser, or Dispatcher) before being added.
+    - **Ownership**: New entities must have a defined owner (Login, Browser, or Dispatcher) before being added. This is the owner of the entity's *client-side lifecycle/storage scope* (e.g., the queue is Login-scoped), not data-level access control. Data-level authorship exists only for Transactions (each records who entered it). Goals are shared by all users: any logged-in user sees and adjusts every goal.
 
 ## 2. Architecture & Layers
 The project follows a strict downward-only dependency hierarchy:

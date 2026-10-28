@@ -67,10 +67,19 @@ jobs:
           printf 'window.__MONEYFLOW_ENV__ = { APPS_SCRIPT_ENDPOINT: "%s" };\n' \
             "$APPS_SCRIPT_ENDPOINT" > assets/js/generated/env.js
  
+      # Only what the browser needs. The list matches tools/deploy.ps1:
+      # apps-script/, tools/, docs/ and AGENTS.md must not be published.
+      - name: Assemble site folder
+        run: |
+          set -eu
+          mkdir _site
+          cp index.html app.webmanifest sw.js robots.txt _site/
+          cp -r assets _site/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
  
       - name: Deploy
         id: deployment

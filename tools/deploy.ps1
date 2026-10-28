@@ -45,6 +45,7 @@ $rootFiles = @(
     'index.html'
     'app.webmanifest'
     'sw.js'
+    'robots.txt'
 )
 
 $directories = @(
@@ -127,6 +128,7 @@ $mustBeThere = @(
     'index.html'
     'app.webmanifest'
     'sw.js'
+    'robots.txt'
     'assets\js\generated\env.js'
 )
 

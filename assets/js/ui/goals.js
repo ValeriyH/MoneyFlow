@@ -12,8 +12,12 @@
 import { budgetStore } from "../core/budgetStore.js";
 import { formatCurrency } from "../domain/formatters.js";
 import { currentPeriodKey } from "../domain/period.js";
+import { showToast } from "./toast.js";
 
 const TAB_ID = "goals";
+const MAX_ADJUST_AMOUNT = 999999;
+
+let isAdjusting = false;
 
 const goalsContainer = document.getElementById("goals-container");
 const adjustModal = document.getElementById("goal-adjust-modal");
@@ -28,12 +32,19 @@ export async function showGoalsTab() {
 
   if (!goalsContainer) return;
 
-  // Load the month — goals come with the budget snapshot
-  const periodKey = currentPeriodKey();
-  await budgetStore.loadPeriod(periodKey);
-  const snapshot = budgetStore.getState();
+  // Cached goals are shown right away: the network may be slow or absent,
+  // and a failed load must not leave the tab empty.
+  renderGoalsList(goalsContainer, budgetStore.getState().goals);
 
-  renderGoalsList(goalsContainer, snapshot.goals);
+  // Load the month — goals come with the budget snapshot
+  try {
+    await budgetStore.loadPeriod(currentPeriodKey());
+  } catch (error) {
+    console.warn("[MoneyFlow] Goals were not refreshed:", error);
+    return;
+  }
+
+  renderGoalsList(goalsContainer, budgetStore.getState().goals);
 }
 
 /**
@@ -42,27 +53,60 @@ export async function showGoalsTab() {
  *
  */
 async function saveAdjust(sign) {
+  // The buttons stay clickable while the request is in flight, so a
+  // double tap on a slow connection would apply the adjustment twice.
+  if (isAdjusting) return;
+
   const amountInput = document.getElementById("adjust-input");
-  const amount = parseFloat(amountInput.value);
-  if (!isNaN(amount) && amount > 0) {
-    const goalId = amountInput.dataset.goalId;
-    const goal = budgetStore.getState().goals.find((g) => String(g.id) === goalId);
-    if (goal) {
-      const result = await budgetStore.adjustGoal({ id: goal.id, amount: sign * amount });
-      if (!result.success && result.error) {
-        alert("Помилка коригування: " + result.error.message);
-      } else {
-        renderGoalsList(goalsContainer, budgetStore.getState().goals);
-        closeAdjustModal();
-      }
+  const amount = parseAmount(amountInput.value);
+  if (amount === null) {
+    showToast("Введіть коректну суму", "warning");
+    return;
+  }
+
+  const goalId = amountInput.dataset.goalId;
+  const goal = budgetStore.getState().goals.find((g) => String(g.id) === goalId);
+  if (!goal) return;
+
+  setAdjusting(true);
+  try {
+    const result = await budgetStore.adjustGoal({ id: goal.id, amount: sign * amount });
+    if (!result.success && result.error) {
+      showToast("Помилка коригування: " + result.error.message, "error");
+      return;
     }
-  } else {
-    alert("Введіть коректну суму.");
+    renderGoalsList(goalsContainer, budgetStore.getState().goals);
+    closeAdjustModal();
+  } finally {
+    setAdjusting(false);
+  }
+}
+
+/**
+ * Strict amount parsing: parseFloat would accept «100abc» as 100.
+ * A comma is accepted as the decimal separator.
+ *
+ * @param {string} rawValue
+ * @returns {number | null} positive amount with up to 2 decimals, or null if invalid
+ */
+function parseAmount(rawValue) {
+  const normalized = String(rawValue).trim().replace(",", ".");
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
+
+  const amount = Number(normalized);
+  return amount > 0 && amount <= MAX_ADJUST_AMOUNT ? amount : null;
+}
+
+function setAdjusting(value) {
+  isAdjusting = value;
+  for (const id of ["adjust-add-btn", "adjust-subtract-btn"]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = value;
   }
 }
 
 function renderGoalsList(container, goals) {
-  const activeGoals = goals.filter((g) => g.active);
+  const activeGoals = (goals ?? []).filter((g) => g.active);
 
   if (activeGoals.length === 0) {
     container.innerHTML = `
@@ -74,8 +118,14 @@ function renderGoalsList(container, goals) {
   }
 
   container.innerHTML = activeGoals.map((goal) => {
-    const goalId = String(goal.id);
-    const progress = Number.isFinite(goal.progress) ? goal.progress : 0;
+    const goalId = escapeHtml(String(goal.id));
+    const progress = Number.isFinite(goal.progress) ? Math.min(100, Math.max(0, goal.progress)) : 0;
+
+    // Without a deadline the monthly requirement is 0 — showing «0 грн» would mislead.
+    const requirementHtml = goal.deadline
+      ? `<strong>Треба ${Number.isFinite(goal.monthlyRequirement) ? formatCurrency(goal.monthlyRequirement).replace('₴', 'грн') : '—'} щомісяця</strong>
+          до ${escapeHtml(String(goal.deadline))}`
+      : `<strong>Дедлайн не вказано</strong>`;
 
     return `
       <div class="goal-card" data-goal-id="${goalId}">
@@ -95,8 +145,7 @@ function renderGoalsList(container, goals) {
         </div>
 
         <div class="monthly-requirement">
-          <strong>Треба ${Number.isFinite(goal.monthlyRequirement) ? formatCurrency(goal.monthlyRequirement).replace('₴', 'грн') : '—'} щомісяця</strong>
-          до ${goal.deadline}
+          ${requirementHtml}
         </div>
 
         <div class="goal-actions">
@@ -177,7 +226,12 @@ document.addEventListener("keydown", (e) => {
  *
  */
 function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  // Quotes are escaped as well: the result is also used inside attributes,
+  // where textContent → innerHTML would leave «"» untouched.
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

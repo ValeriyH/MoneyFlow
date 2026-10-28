@@ -92,11 +92,6 @@ initCollapsibleCards();
  
   const viewSwitcher = initViewSwitcher();
  
-  // If the last view was "Goals", load goals immediately after reload
-  if (document.getElementById('appMain')?.dataset.activeView === 'goals') {
-    showGoalsTab();
-  }
- 
   // Add handler for "goals" tabs
   const tabElements = document.querySelectorAll('.view-tabs__tab');
   tabElements.forEach(tab => {
@@ -266,8 +261,14 @@ function revealApplication() {
   // but the subscription missed it, because the app was invisible.
   // Therefore, one forced render here, and not a prediction in the subscription.
   renderApplicationState(budgetStore.getState());
+
+  // If the last view was "Goals", load goals only now: before this point
+  // there is no session, and the request would go out without a token.
+  if (document.getElementById("appMain")?.dataset.activeView === "goals") {
+    showGoalsTab();
+  }
 }
- 
+
 /* ── Rendering ────────────────────────────────────────────────────── */
  
 /**

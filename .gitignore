@@ -8,7 +8,7 @@ deploy/
 # Backend address: created from a repository secret during deploy
 # or from tools/local-endpoint.txt during local run.
 assets/js/generated/env.js
-tools/local-endpoint.txt
+tools/local-endpoint*.txt
 local-pass.txt
 
 # Real access codes: live in Google Sheets, but may

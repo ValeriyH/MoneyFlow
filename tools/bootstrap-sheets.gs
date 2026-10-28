@@ -72,20 +72,64 @@ const DEMO_LIMITS = [
 * @property {Array<Array<string>>} DEMO_GOALS
 * */
 const DEMO_GOALS = [
-  ['Savings', 'Ноутбук', '25000', '0', '2026-12-31', '2026-10-01'],
-  ['Project', 'Ремонт авто', '8000', '0', '2026-11-15', '2026-10-01'],
-  ['Savings', 'Подорож до Києва', '35000', '0', '2027-01-31', '2026-10-01'],
-  ['Project', 'Оновлення інтер\'єру спальні', '12000', '0', '2026-12-31', '2026-10-05'],
+  ['Savings', '💻 Ноутбук', '25000', '0', '2026-12-31', '2026-10-01'],
+  ['Project', '🔧 Ремонт авто', '8000', '0', '2027-11-15', '2026-10-01'],
+  ['Savings', '🚆 Подорож до Києва', '35000', '0', '2027-01-31', '2026-10-01'],
+  ['Project', '🛏️ Оновлення інтер\'єру спальні', '12000', '0', '2026-12-31', '2026-10-05'],
+  ['Savings', '🎁 На подарунок', '5000', '0', '2026-12-20', '2026-10-01'],
 ];
  
+const BOOTSTRAP_SHEET_NAMES = ['Transactions', 'Categories', 'BudgetLimits', 'Users', 'Goals'];
+
 /**
 * Entry point. Run manually from the editor.
+*
+* Writes only into clean sheets: if any of them already holds data, nothing
+* is touched and the script stops. To start over, clear or delete those
+* sheets yourself.
 *
 * @property {Array<object>} DEMO_USERS
 * */
 function bootstrapSheets() {
   const spreadsheet = SpreadsheetApp.getActive();
- 
+
+  assertSheetsAreClean(spreadsheet);
+
+  try {
+    populateSheets(spreadsheet);
+  } catch (error) {
+    // The writes cannot be rolled back, and the next run would refuse
+    // to start on the half-filled sheets — the log says what to do.
+    Logger.log(
+      'ПОМИЛКА під час заповнення: ' + error.message + '\n' +
+      'Частина аркушів уже може містити дані, тому повторний запуск зупиниться. ' +
+      'Очистіть або видаліть аркуші ' + BOOTSTRAP_SHEET_NAMES.join(', ') +
+      ' і запустіть bootstrapSheets ще раз.',
+    );
+    throw error;
+  }
+
+  const summary =
+    'MoneyFlow: таблицю підготовлено.\n' +
+    'Початкові паролі: ' +
+    DEMO_USERS.map(function (user) {
+      return user.login + ' → ' + user.password;
+    }).join(', ') +
+    '\nНаступний крок — вставити Code.gs та auth.gs у цей самий проєкт ' +
+    'Apps Script і розгорнути як Web App (Execute as: Me, ' +
+    'Who has access: Anyone).';
+
+  Logger.log(summary);
+  spreadsheet.toast(summary, 'Готово', 10);
+}
+
+/**
+* Creates all sheets with headers and fills them with demo data.
+*
+* @param {Spreadsheet} spreadsheet
+* @returns {void}
+* */
+function populateSheets(spreadsheet) {
   writeSheet(spreadsheet, 'Transactions', [
     'ID', 'Дата', 'Категорія', 'Сума', 'Користувач', 'Нотатка', 'Записано',
   ]);
@@ -112,23 +156,34 @@ function bootstrapSheets() {
   fillLimits();
   fillUsers();
   fillGoals();
- 
+  addSampleTransactions();
+
   SpreadsheetApp.flush();
- 
-  const summary =
-    'MoneyFlow: таблицю підготовлено.\n' +
-    'Початкові паролі: ' +
-    DEMO_USERS.map(function (user) {
-      return user.login + ' → ' + user.password;
-    }).join(', ') +
-    '\nНаступний крок — вставити Code.gs та auth.gs у цей самий проєкт ' +
-    'Apps Script і розгорнути як Web App (Execute as: Me, ' +
-    'Who has access: Anyone).';
- 
-  Logger.log(summary);
-  spreadsheet.toast(summary, 'Готово', 10);
 }
  
+/**
+* Stops the bootstrap if any target sheet already has rows below the header.
+* All sheets are checked before the first write, so a refusal never leaves
+* the table half-overwritten.
+*
+* @param {Spreadsheet} spreadsheet
+* @returns {void}
+* */
+function assertSheetsAreClean(spreadsheet) {
+  const occupiedSheetNames = BOOTSTRAP_SHEET_NAMES.filter(function (sheetName) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    return sheet !== null && sheet.getLastRow() > 1;
+  });
+
+  if (occupiedSheetNames.length > 0) {
+    throw new Error(
+      'Аркуші вже містять дані: ' + occupiedSheetNames.join(', ') + '. ' +
+      'Нічого не змінено. Очистіть або видаліть ці аркуші вручну, ' +
+      'якщо справді хочете почати з нуля.',
+    );
+  }
+}
+
 /**
 * Creates a sheet or clears an existing one and writes the header.
 *
@@ -180,11 +235,27 @@ function fillUsers() {
 function fillGoals() {
   const goalsSheet = SpreadsheetApp.getActive().getSheetByName('Goals');
  
+  // DEMO_GOALS item: [type, name, target, current, deadline, start]
   const goalRows = DEMO_GOALS.map(function (goal) {
-    return [Utilities.getUuid(), goal[0], goal[1], parseInt(goal[2]), 0, new Date(goal[5]), new Date(goal[6]), goal[3], 'Так'];
+    return [
+      Utilities.getUuid(), goal[1], Number(goal[2]), Number(goal[3]),
+      parseLocalDate(goal[4]), parseLocalDate(goal[5]), goal[0], 'Так',
+    ];
   });
- 
-  goalsSheet.getRange(2, 1, goalRows.length, 8).setValues(goalRows);
+
+  goalsSheet.getRange(2, 1, goalRows.length, goalRows[0].length).setValues(goalRows);
+}
+
+/**
+ * «YYYY-MM-DD» as a date at local midnight: new Date('YYYY-MM-DD') is parsed
+ * as UTC and could land on the previous day in the sheet.
+ *
+ * @param {string} isoDate
+ * @returns {Date}
+ */
+function parseLocalDate(isoDate) {
+  const parts = isoDate.split('-').map(Number);
+  return new Date(parts[0], parts[1] - 1, parts[2]);
 }
  
 /**
@@ -210,8 +281,8 @@ function hashPassword(password) {
 }
  
 /**
-* Adds several sample transactions to the current month.
-* Call manually if you want to see what a populated budget looks like.
+* Adds several sample transactions (October 2026, the month with demo limits).
+* Called by bootstrapSheets; can also be run alone on an empty Transactions sheet.
 *
 * @property {Array<Array<string>>} DEMO_TRANSACTIONS
 * */
@@ -228,13 +299,6 @@ function addSampleTransactions() {
  
   if (transactionsSheet.getLastRow() > 1) {
     throw new Error('Аркуш Transactions уже містить дані — очистіть його перед демо-заповненням.');
-  }
- 
-  const today = new Date();
- 
-  /** @param {number} daysAgo how many days ago */
-  function daysAgo(daysAgo) {
-    return new Date(today.getFullYear(), today.getMonth(), Math.max(today.getDate() - daysAgo, 1));
   }
  
   transactionsSheet.getRange(2, 1, DEMO_TRANSACTIONS.length, 7).setValues(
