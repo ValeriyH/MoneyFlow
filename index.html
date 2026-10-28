@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#f1f4f8">
   <meta name="description" content="MoneyFlow — сімейний бюджет на Google Таблиці">
   <title>MoneyFlow — Сімейний Бюджет</title>
@@ -13,6 +14,7 @@
   <link rel="stylesheet" href="assets/css/base.css">
   <link rel="stylesheet" href="assets/css/layout.css">
   <link rel="stylesheet" href="assets/css/components.css">
+  <link rel="stylesheet" href="assets/css/goals.css">
   <link rel="stylesheet" href="assets/css/solid.css">
 
   <!-- Вигляд ставимо до першого малювання, інакше на темній темі
@@ -246,7 +248,39 @@
                   data-view="transactions" aria-selected="false">
             <span aria-hidden="true">🧾</span> Транзакції
           </button>
+          <button class="view-tabs__tab" type="button" role="tab"
+                  data-view="goals" aria-selected="false">
+            <span aria-hidden="true">🎯</span> Цілі
+          </button>
         </nav>
+
+        <!-- Контейнер для вкладок "Цілі" -->
+        <div id="goals-container" class="goals-container">
+          <div id="goals-list" class="goals-list"></div>
+        </div>
+
+        <!-- Модальне вікно коригування цілі (винесіно за межі #goals-container,
+             інакше приховується разом із контейнером на інших вкладках) -->
+        <div class="modal-backdrop" id="goal-adjust-modal" hidden>
+          <div class="modal-content modal-content--small">
+            <header class="modal-header">
+              <h3>Коригувати ціль</h3>
+              <button type="button" id="cancel-adjust-btn" class="btn-icon" aria-label="Скасувати">×</button>
+            </header>
+            
+            <div class="adjust-goal-container">
+              <p class="adjust-hint">Введіть суму для додавання або віднімання</p>
+              
+              <div class="adjust-controls">
+                <input type="number" id="adjust-input" step="10" min="0" max="999999" value="" placeholder="0">
+                <div class="adjust-btn-row">
+                  <button type="button" id="adjust-add-btn" class="btn-success">додати</button>
+                  <button type="button" id="adjust-subtract-btn" class="btn-danger">відняти</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <p class="period-loading" id="periodLoading" hidden>Завантаження місяця…</p>
 

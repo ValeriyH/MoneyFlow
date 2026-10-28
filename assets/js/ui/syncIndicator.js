@@ -1,9 +1,11 @@
 /**
- * syncIndicator.js — позначка стану синхронізації у шапці.
+ * syncIndicator.js — synchronization status indicator in the header.
  *
- * Це відповідь на вимогу «користувач має знати, чи все синхронізовано»:
- * стан кольором і текстом видимий постійно, а натискання запускає
- * повторну синхронізацію вручну.
+ * This responds to the requirement "the user must know if everything is synced":
+ * the status is visible via color and text constantly, and clicking triggers
+ * a manual re-synchronization.
+ *
+ *
  */
 
 import { SYNC_STATE, SYNC_STATE_LABELS } from "../config.js";
@@ -14,6 +16,8 @@ import { findById, on } from "./dom.js";
  * @param {import('../core/budgetStore.js').budgetStore} dependencies.store
  * @param {() => void} dependencies.onManualSync
  * @returns {{ render: (state: Readonly<object>) => void }}
+ *
+ *
  */
 export function initSyncIndicator({ store, onManualSync }) {
   const syncIndicatorElement = findById("syncIndicator");
@@ -26,6 +30,7 @@ export function initSyncIndicator({ store, onManualSync }) {
 
   /**
    * @param {Readonly<object>} state
+   *
    */
   function render(state) {
     syncIndicatorElement.dataset.state = state.syncState;
@@ -34,17 +39,18 @@ export function initSyncIndicator({ store, onManualSync }) {
   }
 
   /**
-   * У шапці має бути коротко: довге пояснення робить рядок занадто
-   * широким. Повний текст живе в підказці та в спливаючому повідомленні.
+   * In the header, it should be short: a long explanation makes the line
+   * too wide. The full text lives in the tooltip and in the pop-up message.
    *
    * @param {Readonly<object>} state
    * @returns {string}
+   *
    */
   function buildShortLabel(state) {
     const label = SYNC_STATE_LABELS[state.syncState] ?? "";
 
-    // Шаблон із підстановкою не має потрапити в інтерфейс навіть
-    // у разі, коли стан раптом не сходиться з чергою.
+    // The template with a placeholder should not end up in the interface
+    // even if the state suddenly doesn't match the queue.
     if (label.includes("{count}")) {
       return `Черга: ${state.pendingEntries.length}`;
     }
@@ -55,6 +61,7 @@ export function initSyncIndicator({ store, onManualSync }) {
   /**
    * @param {Readonly<object>} state
    * @returns {string}
+   *
    */
   function buildTooltip(state) {
     if (state.pendingEntries.length > 0) {

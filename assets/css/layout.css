@@ -1,5 +1,5 @@
 /* ==========================================================================
-   layout.css — сітка застосунку, колонки, шапка, підвал
+   layout.css — app grid, columns, header, footer
    ========================================================================== */
 
 .app {
@@ -12,7 +12,7 @@
   padding: var(--space-4) var(--space-4) var(--space-6);
 }
 
-/* ── Шапка ──────────────────────────────────────────────────────────────── */
+/* ── Header ──────────────────────────────────────────────────────────────── */
 
 .app-header {
   display: grid;
@@ -27,9 +27,9 @@
   gap: var(--space-2);
 }
 
-/* Логотип — картинка, а не емодзі: той однаковий у всіх застосунків
-   і не схожий на гроші. Розмір задаємо атрибутом в розмітці, щоб
-   браузер не зміщував решту до завантаження файлу. */
+/* Logo — an image, not an emoji: the same in all apps
+   and unlike money. The size is set by the attribute in the markup,
+   so the browser doesn't shift the rest until the file is loaded. */
 .app-header__logo {
   width: 28px;
   height: 28px;
@@ -50,15 +50,26 @@
   gap: var(--space-2);
 }
 
-/* ── Таби розділів ──────────────────────────────────────────────────────── */
+/* ── Section Tabs ──────────────────────────────────────────────────────── */
 
-/* Таби живуть у правій колонці поруч із даними, які вони
-   перемикають. Тому вони потрібні на будь-якій ширині: на
-   вузькому екрані це єдиний спосіб дійти до іншого розділу,
-   на широкому — те саме, але без довгого скролу. */
+/* Tabs live in the right column next to the data they
+   toggle. Therefore, they are needed at any width: on
+   a narrow screen, this is the only way to navigate to another section,
+   on a wide one — the same, but without a long scroll. */
 
-.app-main[data-active-view="dashboard"]    [data-panel]:not([data-panel="dashboard"]),
+.app-main[data-active-view="dashboard"]    [data-panel]:not([data-panel="dashboard"]) {
+  display: none;
+}
+
 .app-main[data-active-view="transactions"] [data-panel]:not([data-panel="transactions"]) {
+  display: none;
+}
+
+.app-main[data-active-view="goals"] [data-panel] {
+  display: none;
+}
+
+.app-main:not([data-active-view="goals"]) #goals-container {
   display: none;
 }
 
@@ -96,7 +107,7 @@
   display: none;
 }
 
-/* ── Перемикач місяців ─────────────────────────────────────────────────── */
+/* ── Period Switcher ─────────────────────────────────────────────────────── */
 
 .period-switcher {
   display: flex;
@@ -113,7 +124,7 @@
   letter-spacing: -0.01em;
 }
 
-/* ── Основна сітка ─────────────────────────────────────────────────────── */
+/* ── Main Grid ───────────────────────────────────────────────────────────── */
 
 .app-main {
   display: grid;
@@ -134,7 +145,7 @@
   top: var(--space-4);
 }
 
-/* ── Підвал ────────────────────────────────────────────────────────────── */
+/* ── Footer ────────────────────────────────────────────────────────────── */
 
 .app-footer {
   display: flex;
@@ -147,7 +158,7 @@
   color: var(--color-text-tertiary);
 }
 
-/* ── Екран блокування ──────────────────────────────────────────────────── */
+/* ── Lock Screen ────────────────────────────────────────────────────────── */
 
 .gate {
   display: flex;
@@ -203,7 +214,7 @@
   line-height: 1.5;
 }
 
-/* Зворотний відлік блокування після серії невдалих спроб. */
+/* Locktime countdown after a series of failed attempts. */
 .gate__countdown {
   padding: 10px 12px;
   font-family: var(--font-numeric);
@@ -215,7 +226,7 @@
   text-align: center;
 }
 
-/* Перемикання між входом і реєстрацією. */
+/* Switch between login and registration. */
 .gate__switch {
   padding: var(--space-2) 0 0;
   font-size: 14px;
@@ -231,7 +242,7 @@
   color: var(--color-accent-strong);
 }
 
-/* ── Спливаючі повідомлення ─────────────────────────────────────────────── */
+/* ── Toasts ─────────────────────────────────────────────────────────────── */
 
 .toast-host {
   position: fixed;
@@ -246,7 +257,7 @@
   pointer-events: none;
 }
 
-/* ── Адаптив ───────────────────────────────────────────────────────────── */
+/* ── Adaptivity ───────────────────────────────────────────────────────────── */
 
 @media (min-width: 900px) {
   .app-main {
@@ -256,15 +267,15 @@
 }
 
 @media (max-width: 899px) {
-  /* На вузькому екрані колонки не потрібні: форма й так стоїть
-     над даними, а таби вже перемикають розділи. */
+  /* On narrow screens, columns are not needed: the form stands
+     above the data, and tabs already switch sections. */
   .column--entry {
     position: static;
   }
 
-  /* Розгорнуті категорії, дата й нотатка з'їдають майже весь
-     екран. Тому в згорнутому стані лишається одне поле суми
-     й кнопка — решта з'являється, як тільки почали вводити. */
+  /* Expanded categories, date, and note occupy almost the entire
+     screen. Therefore, in the collapsed state, only the sum field
+     and the button remain — the rest appears as soon as you start typing. */
   .entry-card__details {
     max-height: 0;
     opacity: 0;
@@ -302,7 +313,7 @@
     position: static;
   }
 
-  /* Текст індикатора займає місце — на вузькому екрані лишається крапка. */
+  /* The indicator text takes up space — on narrow screens, only a dot remains. */
   .sync-indicator__text {
     display: none;
   }

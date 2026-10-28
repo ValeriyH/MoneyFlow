@@ -1,36 +1,36 @@
 /* ==========================================================================
-   solid.css — суцільний вигляд застосунку й темна тема.
+   solid.css — full app view and dark theme.
 
-   Різниця між світлою й темною темою — тільки кольори. Усе інше
-   спільне, тому правила нижче НЕ мають префікса [data-style="solid"]:
-   інакше світла тема лишилася б старою. Виняток один — блок токенів
-   угорі, він і є темною темою.
+   The difference between light and dark themes is only colors. Everything else
+   is shared, so the rules below do NOT have the [data-style="solid"] prefix:
+   otherwise, the light theme would have remained old. One exception — the token
+   block at the top, which IS the dark theme.
 
-   Файл підключено останнім: він перебиває правила base/layout/
-   components, а не навпаки. Перестав його вгору — і з'явиться старий
-   вигляд у випадку, коли його випадково забудуть.
+   File is connected last: it overrides base/layout/
+   components rules, not the other way around. Move it up — and the old
+   view will appear if it's accidentally forgotten.
 
-   Значення кольорів узяті з :root (base.css) і лише перевизначені
-   тут для темної теми. Тому правило таке: якщо колір потрібен лише
-   в одній темі — це токен, а не значення в правилі.
+   Color values are taken from :root (base.css) and only overridden here for
+   the dark theme. Therefore, the rule is: if a color is needed only in
+   one theme — it's a token, not a value in a rule.
    ========================================================================== */
 
 [data-style="solid"] {
   color-scheme: dark;
 
-  /* ── Поверхні ────────────────────────────────────────────────────────── */
+  /* ── Surfaces ────────────────────────────────────────────────────────── */
   --color-canvas: #0d1014;
   --color-canvas-top: #10141a;
   --color-surface: #151a21;
   --color-surface-muted: #1b212a;
   --color-overlay: rgba(0, 0, 0, 0.62);
 
-  /* ── Текст ───────────────────────────────────────────────────────────── */
+  /* ── Text ───────────────────────────────────────────────────────────── */
   --color-text-primary: #e9edf4;
   --color-text-secondary: #9aa5b6;
   --color-text-tertiary: #6b7688;
 
-  /* ── Акценти ────────────────────────────────────────────────────────── */
+  /* ── Accents ────────────────────────────────────────────────────────── */
   --color-accent: #4d8dff;
   --color-accent-strong: #2f74f5;
   --color-accent-soft: #17233d;
@@ -44,19 +44,19 @@
   --color-warning: #fbbf24;
   --color-warning-soft: #322510;
 
-  /* ── Лінії та тіні ──────────────────────────────────────────────────── */
+  /* ── Lines and shadows ──────────────────────────────────────────────────── */
   --color-border: #232a35;
   --color-border-strong: #333c4b;
   --color-border-hover: #414c5e;
 
-  /* У темній темі тіні майже не видно, тому кордони роблять
-     роботу за них: картка має бути відділена від фону. */
+  /* In dark theme, shadows are barely visible, so borders do the work:
+     the card must be separated from the background. */
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-raised: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
-/* Легкий вертикальний градієнт: фон перестає бути плоским
-   прямокутником і не тягне увагу до країв екрана. */
+/* Subtle vertical gradient: the background ceases to be a flat rectangle
+   and doesn't draw attention to the screen edges. */
 body {
   background-image: linear-gradient(180deg, var(--color-canvas-top) 0%, var(--color-canvas) 320px);
   background-attachment: fixed;
@@ -67,7 +67,7 @@ code {
   color: var(--color-accent);
 }
 
-/* ── Шапка: суцільна панель замість рядка окремих елементів ───────────── */
+/* ── Header: solid panel instead of a row of separate elements ───────────── */
 
 .app {
   gap: var(--space-4);
@@ -95,11 +95,16 @@ code {
   letter-spacing: -0.01em;
 }
 
-/* ── Навігація місяцями: одне ціле ────────────────────────────────────── */
+.app-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
 
-/* Головна ідея: стрілки й назва живуть у спільній «капсулі» з
-   тлою, тож читаються як один елемент керування, а не три
-   розкиданих. */
+/* ── Period switcher: one single capsule ────────────────────────────────────── */
+
+/* Main idea: arrows and name live in a common "capsule" with a background,
+   so they are read as a single control element, not three scattered ones. */
 
 .period-switcher {
   justify-self: center;
@@ -143,7 +148,7 @@ code {
   white-space: nowrap;
 }
 
-/* ── Картки ────────────────────────────────────────────────────────────── */
+/* ── Cards ────────────────────────────────────────────────────────────── */
 
 .card,
 .gate__card {
@@ -167,7 +172,7 @@ code {
   border: 1px solid var(--color-border);
 }
 
-/* ── Таби розділів ────────────────────────────────────────────────────── */
+/* ── View tabs ────────────────────────────────────────────────────────────── */
 
 .view-tabs {
   gap: var(--space-1);
@@ -189,7 +194,7 @@ code {
   background: var(--color-surface-muted);
 }
 
-/* ── Поля ──────────────────────────────────────────────────────────────── */
+/* ── Fields ──────────────────────────────────────────────────────────────── */
 
 .field__input {
   background: var(--color-surface-muted);
@@ -211,7 +216,7 @@ code {
   color: var(--color-text-secondary);
 }
 
-/* ── Чіпси категорій ──────────────────────────────────────────────────── */
+/* ── Category chips ────────────────────────────────────────────────────────── */
 
 .chip {
   background: var(--color-surface-muted);
@@ -228,7 +233,7 @@ code {
   background: var(--color-accent-soft);
 }
 
-/* ── Список операцій ───────────────────────────────────────────────────── */
+/* ── Transaction list ──────────────────────────────────────────────────────── */
 
 .transaction {
   border-bottom-color: var(--color-border);
@@ -256,7 +261,7 @@ code {
   color: var(--color-text-primary);
 }
 
-/* ── Кнопки ────────────────────────────────────────────────────────────── */
+/* ── Buttons ────────────────────────────────────────────────────────────── */
 
 .button--primary {
   background: var(--color-accent);
@@ -285,7 +290,7 @@ code {
   color: var(--color-text-primary);
 }
 
-/* ── Профіль і синхронізація ───────────────────────────────────────────── */
+/* ── Profile and sync ───────────────────────────────────────────────────────────── */
 
 .profile-chip {
   background: var(--color-surface-muted);
@@ -297,7 +302,7 @@ code {
   color: var(--color-text-secondary);
 }
 
-/* ── Смуга «щойно записано» ────────────────────────────────────────────── */
+/* ── Recent entry bar ────────────────────────────────────────────────────────────── */
 
 .recent-entry {
   background: var(--color-surface-muted);
@@ -305,12 +310,12 @@ code {
   border-radius: var(--radius-md);
 }
 
-/* ── Вузький екран ─────────────────────────────────────────────────────── */
+/* ── Mobile view ─────────────────────────────────────────────────────────────── */
 
-/* На телефоні шапка лишається на одній лінії: логотип, місяць,
-   опції. Назву застосунку тут нема — вона вже на іконці. Місяць
-   стоїть у центрі й стискається першим із трьох, бо назва
-   залишається читабельною довше за логотип. */
+/* On mobile, header stays on one line: logo, month, options.
+   The app name is not here — it's already on the icon. The month
+   is in the center and shrinks first of the three, because the name
+   remains readable longer than the logo. */
 
 @media (max-width: 620px) {
   .app {
@@ -347,9 +352,9 @@ code {
   }
 }
 
-/* На найвужчому екрані місця вистачає на «листопада 2026 р.» лише
-   впритузь: 119 px тексту проти 113 px місця. Тому й логотип
-   зникає (назва вже є на іконці), і поля стискаються до 4 px. */
+/* On the narrowest screen, there is only room for "November 2026"
+   tightly: 119 px of text against 113 px of space. Therefore, the logo
+   disappears (the name is already on the icon), and fields shrink to 4 px. */
 
 @media (max-width: 359px) {
   .app-header__logo {
@@ -367,9 +372,9 @@ code {
   }
 }
 
-/* Нижче 480px ховається текст біля крапки синхронізації й ім'я
-   біля аватарки, тож бічні поля в цих двох кнопках лише з'їдають
-   місце для місяця. */
+/* Below 480px, the text near the sync dot and the name near the avatar
+   are hidden, so the side fields in these two buttons only consume space
+   for the month. */
 
 @media (max-width: 480px) {
   .profile-chip {

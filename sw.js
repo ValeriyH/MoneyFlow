@@ -1,28 +1,17 @@
 /**
- * sw.js — офлайн-оболонка MoneyFlow.
+ * sw.js — MoneyFlow offline shell.
  *
- * Роль вузька й свідома: **мережа перша, кеш запасний**. Тобто
- * при наявності мережі віддаємо те, що прийшло, і одночасно
- * оновлюємо кеш; без мережі віддаємо останнє відоме.
+ * Role is narrow and deliberate: **network first, cache fallback**. That is, if a network is available, we give what arrived and simultaneously update the cache; without a network, we give the last known.
+ * Why not "cache first"? There is no build system in the project, so file names do not have a content hash, and "cache first" would mean that a fix takes a week to reach the family until someone manually deletes the app. Network first kills this entire class of problems at the cost of one request, and the app is already waiting for the network for the snapshot.
  *
- * Чому не «кеш перший». У проєкті немає збірки, тож в іменах
- * файлів немає відбитка вмісту, і «кеш перший» означав би, що
- * виправлення доходить до родини за тиждень, аж поки хтось не
- * видалить застосунок вручну. Мережа перша вбиває весь клас
- * таких проблем ціною одного запиту, а застосунок і так чекає на
- * мережу за знімком.
+ * What is not cached: POST requests to Apps Script (which go to another domain anyway), everything external, and uncacheable responses.
  *
- * Що не кешується: запити POST до Apps Script (вони й так
- * йдуть на інший домен), усе зовнішнє і некешовані відповіді.
  */
 
 const CACHE_NAME = "moneyflow-shell-v1";
 
 self.addEventListener("install", (event) => {
-  // Оболонку не переносимо попередньо: вона і так завантажиться
-  // першого ж відкриття. Список файлів у коді — це список,
-  // який забувають оновити, а без нього кеш сам збирає все, що
-  // реально потрібне.
+  // Do not pre-transfer the shell: it will load on the first opening anyway. The file list in the code is a list that is often forgotten to update, and without it, the cache automatically collects everything that is actually needed.
   event.waitUntil(self.skipWaiting());
 });
 
@@ -49,15 +38,14 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Скрипт самого worker'а не з кешу: інакше нова версія
-  // sw.js не потрапила б у браузер ніколи.
+  // The worker's script itself is not from cache: otherwise, a new version of sw.js would never reach the browser.
   if (url.pathname.endsWith("/sw.js")) return;
 
   event.respondWith(networkFirst(request));
 });
 
 /**
- * Мережа перша, кеш запасний.
+ * Network first, cache fallback.
  *
  * @param {Request} request
  * @returns {Promise<Response>}
@@ -69,10 +57,7 @@ async function networkFirst(request) {
   try {
     const response = await fetch(request);
 
-    // Помилковий HTTP-відповідь — це для офлайну те саме, що
-    // обрив: 502 від проксі, сторінка «піймав портал», збій CDN.
-    // `fetch` тут не кидає, а віддає 5xx — і без цієї перевірки
-    // користувач бачив би сторінку помилки замість свого бюджету.
+    // A failed HTTP response is the same as a break for offline_ : 502 from a proxy, a 'portal caught' page, CDN failure. fetch does not throw here but returns 5xx - and without this check, the user would see an error page instead of their budget.
     if (!response.ok) {
       if (cached) return cached;
       return response;
@@ -84,15 +69,11 @@ async function networkFirst(request) {
 
     return response;
   } catch (error) {
-    // ignoreSearch: у запиті може бути query, якого в кеші немає
-    // (перевірка версії, редирект із трекувальника). Це той самий
-    // файл, тож мітка після «?» не має значення для офлайну.
+    // ignoreSearch: a query might be present in the request that is not in the cache (version check, redirect from a tracker). This is the same file, so the mark after "?" doesn't matter for offline.
     if (cached) return cached;
 
-    // Офлайн, а такого файлу в кеші ще немає — перше відкриття
-    // без мережі. Кажемо про це прямо, бо порожня сторінка
-    // виглядала б як зламаний застосунок.
-    return new Response("Офлайн, і цієї сторінки ще немає в кеші.", {
+    // Offline, and this file is not yet in the cache - first opening without a network. We say this directly because a blank page would look like a broken app.
+    return new Response("Offline, and this page is not yet in the cache.", {
       status: 503,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });

@@ -1,81 +1,85 @@
 /**
- * auth.gs — вхід за паролем і сесії на стороні Google Apps Script.
+ * auth.gs — password authentication and session management on the Google Apps Script side.
  *
- * Розділено з Code.gs, бо це самодостатній шар: він не дивиться
- * в операції й бюджет, лише в людей.
+ * Separated from Code.gs because it is a self-contained layer: it only handles
+ * users and does not look at operations or budgets.
  *
- * ── Схема входу ───────────────────────────────────────────────────────────
- * Пароль не залишає браузер:
- *   passwordHash = SHA-256(пароль)          ← це і є «пароль» у системі
+ * ── Login Scheme ──────────────────────────────────────────────────────────────
+ * Password is not stored in the browser:
+ *   passwordHash = SHA-256(password)          ← this is the "password" in the system
  *   proof        = SHA-256(passwordHash + timestamp)
  *
- * Сервер зберігає лише passwordHash. Для входу надсилається proof
- * разом із часом клієнта: значення, перехоплене стороннім розширенням
- * або шкідливим ПЗ, згодом не працює — воно прив'язане до вікна
- * часу і не приймається двічі.
+ * The server only stores passwordHash. For login, a proof is sent along with
+ * the client time: a value intercepted by a third-party extension or
+ * malicious software will not work later — it is tied to a time window
+ * and cannot be used twice.
  *
- * Хеші на обох сторонах мають збігатися до байта, тому скрізь
- * UTF-8 і шістнадцятковий запис (див. assets/js/domain/crypto.js).
+ * Hashes on both sides must match byte-for-byte, so UTF-8 and hexadecimal
+ * notation are used everywhere (see assets/js/domain/crypto.js).
  *
- * ── Сесії ────────────────────────────────────────────────────────────────
- * Після успішного входу сервер підписує токен (HMAC-SHA256) з логіном,
- * часом видачі та часом завершення. Браузер зберігає токен і більше
- * не має пароля. Ключ підпису й термін життя — у PropertiesService,
- * тому змінюються без передеплоювання скрипта.
- */
+ * ── Sessions ──────────────────────────────────────────────────────────────────
+ * After a successful login, the server signs a token (HMAC-SHA256) with the login,
+ * issuance time, and expiration time. The browser stores the token and
+ * no longer needs the password. The signing key and lifetime are in
+ * PropertiesService, so they can be changed without redeploying the script.
+ *  */
 
-/** Стандартний тиждень, якщо в PropertiesService нічого не задано. */
+/** Default week, if nothing is set in PropertiesService. */
 const TOKEN_TTL_HOURS_DEFAULT = 168;
 
 /**
- * Наскільки може розходитися годинник клієнта із серверним.
- * За таке вікно доказ вважається свіжим.
- */
+ * How much the client clock can deviate from the server.
+ * Within this window, the proof is considered fresh.
+ *  */
 const PROOF_TIMESTAMP_WINDOW_MINUTES = 60;
 
-/** Мінімальна довжина пароля. Однакова на сервері й у формі. */
+/** Minimum password length. Same on server and in form. */
 const MIN_PASSWORD_LENGTH = 10;
 
 /**
- * Однакова відповідь на відмову у вході.
+ * Standard response to a failed login.
  *
- * Не розкриває, існує такий логін чи ні: інакше можна було б
- * перебирати логіни й за текстом помилки дізнаватися, хто
- * зареєстрований.
- */
+ * Does not reveal if the login exists or not: otherwise, it would be
+ * possible to brute-force logins and find registered users by checking
+ * the error message.
+ *  */
 const REFUSAL_MESSAGE = 'Невірний логін або пароль';
 
 const PROPERTY_TOKEN_SECRET = 'moneyflow.tokenSecret';
 const PROPERTY_TOKEN_TTL = 'moneyflow.tokenTtlHours';
 const PROPERTY_LOGIN_STATE = 'moneyflow.loginState';
 
-/* ── Захист від перебору ────────────────────────────────────────────────── */
+/* ── Brute-force protection ────────────────────────────────────────────── */
 
 /**
- * Скільки невдалих спроб поспіль допускаємо до блокування.
+ * Maximum consecutive failed attempts allowed before lockout.
  *
- * Лічильник спільний на всіх: до перевірки ще невідомо, чий пароль
- * намагаються підібрати.
+ * The counter is shared across all users: until verified, it is unknown
+ * whose password is being brute-forced.
  *
- * Блокування перевіряється ДО будь-якого порівняння хешів, тому
- * після спрацювання відсікаються всі спроби — включно з правильним
- * паролем. Перебір з ~144 000 спроб на добу падає до 480: у 300 разів.
- */
+ * Lockout is checked BEFORE any hash comparisons, so once triggered,
+ * all attempts are blocked — including those with the correct password.
+ * Brute-forcing ~144,000 attempts per day is reduced to 480: a 300x reduction.
+ *  */
+
 const MAX_FAILED_ATTEMPTS = 5;
 
-/** На скільки хвилин блокується вхід після цих спроб. */
+/** Minutes to lockout login after exceeding allowed attempts. */
+
 const LOCKOUT_DURATION_MINUTES = 15;
 
-/** Ключ у PropertiesService, де живе лічильник спроб. */
+/** Key in PropertiesService where the attempt counter is stored. */
+
 const PROPERTY_FAILED_ATTEMPTS = 'moneyflow.loginAttempts';
 
-/* ── Хеші ───────────────────────────────────────────────────────────────── */
+/* ── Hashes ───────────────────────────────────────────────────────────── */
 
 /**
- * SHA-256 рядка шістнадцятковим текстом.
+ * Returns the SHA-256 hash of a string as a hexadecimal text.
  * @param {string} text
  * @returns {string}
- */
+ *  */
+
 function hashText(text) {
   const digestBytes = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
@@ -90,15 +94,16 @@ function hashText(text) {
     .join('');
 }
 
-/* ── Секрет підпису ─────────────────────────────────────────────────────── */
+/* ── Signing Secret ───────────────────────────────────────────────────────── */
 
 /**
- * Повертає секрет підпису, створюючи його при першому зверненні.
- * Термін життя сесій налаштовується окремо, у PropertiesService,
- * щоб не довелося передеплоювати скрипт.
+ * Returns the signing secret, creating it on first access.
+ * Session lifetime is configured separately in PropertiesService
+ * so it can be changed without redeploying the script.
  *
  * @returns {string}
- */
+ *  */
+
 function getOrCreateTokenSecret() {
   const scriptProperties = PropertiesService.getScriptProperties();
 
@@ -111,7 +116,7 @@ function getOrCreateTokenSecret() {
   return secret;
 }
 
-/** @returns {number} скільки годин живий токен */
+/** @returns {number} session token lifetime in hours */
 function getTokenTtlHours() {
   const rawValue = PropertiesService.getScriptProperties().getProperty(PROPERTY_TOKEN_TTL);
   const parsedValue = Number(rawValue);
@@ -125,15 +130,15 @@ function setTokenTtlHours(hours) {
   PropertiesService.getScriptProperties().setProperty(PROPERTY_TOKEN_TTL, String(hours));
 }
 
-/* ── Стан входів ────────────────────────────────────────────────────────── */
+/* ── Login State ────────────────────────────────────────────────────────── */
 
 /**
- * Тимчасовий стан, який не має називати: час останнього прийнятого
- * доказу (щоб не пропустити реплей) і час зміни пароля (щоб
- * застарілі токени перестали діяти).
+ * Temporary state which should not be named: time of the last accepted
+ * proof (to prevent replay) and time of password change (so that
+ * expired tokens no longer work).
  *
  * @returns {{ [login: string]: { lastProofAtMs: number, credentialsChangedAtMs: number } }}
- */
+ *  */
 function readLoginState() {
   const rawState = PropertiesService.getScriptProperties().getProperty(PROPERTY_LOGIN_STATE);
   if (!rawState) return {};
@@ -149,7 +154,7 @@ function readLoginState() {
 /**
  * @param {string} login
  * @param {{ lastProofAtMs?: number, credentialsChangedAtMs?: number }} patch
- */
+ *  */
 function updateLoginState(login, patch) {
   const loginState = readLoginState();
   const previousEntry = loginState[login] || {};
@@ -161,11 +166,11 @@ function updateLoginState(login, patch) {
   );
 }
 
-/* ── Захист від перебору ────────────────────────────────────────────────── */
+/* ── Brute Force Protection ─────────────────────────────────────────────── */
 
 /**
  * @returns {{ failures: number, firstFailureAtMs: number, blockedUntilMs: number }}
- */
+ *  */
 function readAttemptState() {
   const rawState = PropertiesService.getScriptProperties().getProperty(PROPERTY_FAILED_ATTEMPTS);
   if (!rawState) return { failures: 0, firstFailureAtMs: 0, blockedUntilMs: 0 };
@@ -184,7 +189,7 @@ function readAttemptState() {
 
 /**
  * @param {{ failures?: number, firstFailureAtMs?: number, blockedUntilMs?: number }} state
- */
+ *  */
 function saveAttemptState(state) {
   PropertiesService.getScriptProperties().setProperty(
     PROPERTY_FAILED_ATTEMPTS,
@@ -193,8 +198,8 @@ function saveAttemptState(state) {
 }
 
 /**
- * @throws {RequestError} якщо вхід зараз заблокований
- */
+ * @throws {RequestError} if login is currently blocked
+ *  */
 function ensureLoginIsNotBlocked() {
   const attemptState = readAttemptState();
 
@@ -209,12 +214,12 @@ function ensureLoginIsNotBlocked() {
   );
 }
 
-/** Рахує невдалу спробу й, коли їх достатньо, вмикає блокування. */
+/** Counts failed attempts and enables lockout when sufficient. */
 function registerFailedAttempt() {
   const nowMs = Date.now();
   const attemptState = readAttemptState();
 
-  // Нова серія спроб: перша невдача відкриває відлік заново.
+  // New attempt series: first failure resets the lockout counter.
   const isNewSeries = nowMs - attemptState.firstFailureAtMs > LOCKOUT_DURATION_MINUTES * 60 * 1000;
   const failures = (isNewSeries ? 0 : attemptState.failures) + 1;
   const firstFailureAtMs = isNewSeries ? nowMs : attemptState.firstFailureAtMs;
@@ -230,14 +235,14 @@ function clearFailedAttempts() {
   saveAttemptState({ failures: 0, firstFailureAtMs: 0, blockedUntilMs: 0 });
 }
 
-/* ── Вхід за паролем ────────────────────────────────────────────────────── */
+/* ── Password Login ────────────────────────────────────────────────────────── */
 
 /**
- * Перевіряє доказ і повертає сесію.
+ * Verifies proof and returns session.
  *
  * @param {{ login: string, proof: string, timestamp: number }} payload
  * @returns {{ token: string, expiresAt: number, serverTime: number, viewer: object }}
- */
+ *  */
 function authenticateByCredentials(payload) {
   ensureLoginIsNotBlocked();
 
@@ -266,17 +271,17 @@ function authenticateByCredentials(payload) {
 
   const user = findUserByLogin(login);
 
-  // Немає користувача, є неактивний, зламаний хеш — назові
-  // однакова відповідь. Різні тексти видали б перелік тих,
-  // хто тут зареєстрований: можна було б перебирати логіни й
-  // дивитися, які відповідають інакше.
+  // No user found, account is inactive, or hash is broken — return
+  // the same response. Different texts would reveal which users are
+  // registered: it would be possible to brute-force logins and check
+  // which ones respond differently.
   if (!user) {
     registerFailedAttempt();
     throw new RequestError(REFUSAL_MESSAGE, 'UNAUTHORIZED');
   }
 
-  // Код правильний, але акаунт ще не увімкнутий. Кажемо прямо,
-  // щоб людина не шукала помилку у своєму паролі.
+  // Correct code, but account is not active yet. We tell the user
+  // directly so they don't look for an error in their own password.
   if (!user.isActive) {
     throw new RequestError(
       'Акаунт створено, але ще не активовано. Адміністратор має увімкнути його в таблиці.',
@@ -284,11 +289,12 @@ function authenticateByCredentials(payload) {
     );
   }
 
-  // Реплей: той самий доказ удруге не приймається. Перехоплений
-  // запит стає безкорисним, щойно його вже відіграли.
+  // Replay: the same proof is not accepted twice. An intercepted
+  // request becomes useless once it has been replayed.
   //
-  // Ключ стану — канонічне ім'я з аркуша, а не те, що ввели:
-  // інакше «ОЛЯ» й «Оля» мали б різні записи й обхід реплею.
+  // The state key is the canonical name from the sheet, not the input:
+  // otherwise "Olya" and "Olya" in Cyrillic would have different entries and bypass
+  // the replay check.
   const loginState = readLoginState()[user.name] || {};
   if (clientTimestamp <= (loginState.lastProofAtMs || 0)) {
     throw new RequestError(
@@ -325,13 +331,13 @@ function authenticateByCredentials(payload) {
   };
 }
 
-/* ── Сесії ──────────────────────────────────────────────────────────────── */
+/* ── Sessions ────────────────────────────────────────────────────────── */
 
 /**
  * @param {string} login
  * @param {number} issuedAtMs
  * @returns {string}
- */
+ *  */
 function issueSessionToken(login, issuedAtMs) {
   const payload = {
     login: login,
@@ -346,7 +352,7 @@ function issueSessionToken(login, issuedAtMs) {
 /**
  * @param {string} token
  * @returns {{ login: string, issuedAt: number, expiresAt: number }}
- */
+ *  */
 function verifySessionToken(token) {
   const rawToken = String(token || '').trim();
   if (rawToken === '') {
@@ -375,13 +381,13 @@ function verifySessionToken(token) {
     throw new RequestError('Токен відсутній або спустошений', 'UNAUTHORIZED');
   }
 
-  // Єдиний випадок, коли токен недійсний, але підписаний правильно
-  // і всі дані в ньому чесні: просто вичерпався час.
+  // The only case where the token is invalid but signed correctly
+  // and all data in it is honest: simply expired.
   //
-  // Клієнт на цьому коді зберігає чергу - після повторного входу
-  // вона дійде. Решта відмов (акаунт вимкнено, пароль змінено,
-  // токен підроблено) - це UNAUTHORIZED, і черга викидається:
-  // повторний вхід не допоможе, запис блокував би решту вічно.
+  // The client on this code stores a queue - after re-login
+  // it will be processed. The rest of the failures (account disabled, password changed,
+  // token forged) are UNAUTHORIZED, and the queue is discarded:
+  // re-login won't help, as otherwise the record would be blocked forever.
   if (payload.expiresAt < Date.now()) {
     throw new RequestError('Термін сесії минув. Увійдіть знову.', 'SESSION_EXPIRED');
   }
@@ -391,8 +397,8 @@ function verifySessionToken(token) {
 
 /**
  * @param {string} encodedPayload
- * @returns {string} підпис у форматі base64url
- */
+ * @returns {string} signature in base64url format
+ *  */
 function signTokenPayload(encodedPayload) {
   const signatureBytes = Utilities.computeHmacSha256Signature(
     encodedPayload,
@@ -405,12 +411,12 @@ function signTokenPayload(encodedPayload) {
 }
 
 /**
- * Знаходить користувача за логіном. Логін — це ім'я, тому воно
- * має бути унікальним.
+ * Finds user by login. Login is the name, so it
+ * must be unique.
  *
  * @param {string} login
  * @returns {{ name: string, color: string, passwordHash: string, isActive: boolean } | null}
- */
+ *  */
 function findUserByLogin(login) {
   const normalizedLogin = login.trim().toLowerCase();
 
@@ -421,15 +427,15 @@ function findUserByLogin(login) {
   return null;
 }
 
-/* ── Реєстрація та зміна пароля ────────────────────────────────────────── */
+/* ── Registration and Password Change ────────────────────────────────────────── */
 
 /**
- * Правила до пароля. Однакові для самостійної реєстрації і для
- * паролів, які заводить адміністратор.
+ * Password rules. Same for standalone registration and for
+ * passwords set by an administrator.
  *
  * @param {string} password
  * @throws {RequestError}
- */
+ *  */
 function requireStrongPassword(password) {
   const unmetRules = [
     { isMet: password.length >= MIN_PASSWORD_LENGTH,
@@ -448,13 +454,13 @@ function requireStrongPassword(password) {
 }
 
 /**
- * Пише рядок у аркуш Users.
+ * Writes a row to the Users sheet.
  *
  * @param {{ login: string, passwordHash: string, color: string, isActive: boolean }} newUser
- */
+ *  */
 function insertUserRecord(newUser) {
-  // insertUserRecord пише за ключами, а не за позиціями, тому
-  // пропущена властивість тихо потрапила б у клітинку як undefined.
+  // insertUserRecord writes by keys, not by positions, so a
+  // missing property would silently end up in a cell as undefined.
   for (const requiredKey of ['login', 'passwordHash', 'color']) {
     if (typeof newUser[requiredKey] !== 'string' || newUser[requiredKey] === '') {
       throw new Error(
@@ -467,8 +473,8 @@ function insertUserRecord(newUser) {
   const usersSheet = getRequiredSheet(SHEET_USERS);
   requireSheetColumns(SHEET_USERS, readSheetHeader(usersSheet).index, REQUIRED_USER_COLUMNS);
 
-  // Значення передаються в порядку шапки; appendRowByColumnNames сам
-  // розставить їх так, щоб порядок колонок у таблиці не мав значення.
+  // Values are passed in header order; appendRowByColumnNames
+  // will arrange them so that the order of columns in the table does not matter.
   appendRowByColumnNames(usersSheet, [
     newUser.login,
     newUser.color,
@@ -478,13 +484,13 @@ function insertUserRecord(newUser) {
 }
 
 /**
- * Оновлює пароль існуючого користувача та інвалідує його старі
- * токени: час зміни записується, і сесія, видана раніше,
- * більше не проходить.
+ * Updates password of existing user and invalidates old
+ * tokens: change time is recorded, and session issued earlier
+ * no longer works.
  *
  * @param {string} login
  * @param {string} newPassword
- */
+ *  */
 function replaceUserPassword(login, newPassword) {
   const normalizedLogin = login.trim().toLowerCase();
   const usersSheet = getRequiredSheet(SHEET_USERS);
@@ -507,8 +513,9 @@ function replaceUserPassword(login, newPassword) {
 
     usersSheet.getRange(offset + 2, passwordColumnIndex + 1).setValue(hashText(newPassword));
 
-    // Ключ стану — точне ім'я з аркуша, а не те, що ввів користувач:
-    // інакше «ОЛЯ» й «Оля» мали б різні записи.
+    // The state key is the canonical name from the sheet, not the input:
+    // otherwise "Olya" and "Olya" in Cyrillic would have different entries and bypass
+    // the replay check.
     updateLoginState(rowLogin, { credentialsChangedAtMs: Date.now() });
     return;
   }
@@ -519,12 +526,12 @@ function replaceUserPassword(login, newPassword) {
 /* ── Base64url ──────────────────────────────────────────────────────────── */
 
 /**
- * Текст у base64url без '=' наприкінці.
- * Саме в такому вигляді лежить корисне навантаження токена.
+ * Text in base64url without '=' at the end.
+ * This is how the useful payload of the token lies.
  *
  * @param {string} text
  * @returns {string}
- */
+ *  */
 function base64UrlEncodeUtf8(text) {
   return Utilities.base64EncodeWebSafe(
     Utilities.newBlob(String(text), 'text/plain', 'UTF-8').getBytes(),
@@ -534,9 +541,9 @@ function base64UrlEncodeUtf8(text) {
 /**
  * @param {string} encodedText
  * @returns {string}
- */
+ *  */
 function base64UrlDecodeUtf8(encodedText) {
-  // base64 потребує довжину, кратну 4, а '=' обрізали при кодуванні.
+  // base64 requires length multiple of 4, and '=' were stripped during encoding.
   const padded = encodedText + '==='.slice((encodedText.length + 3) % 4);
   const bytes = Utilities.base64DecodeWebSafe(padded);
 

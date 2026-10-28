@@ -1,18 +1,18 @@
-# Залежностей немає - проєкт працює з коробки.
-# Додайте сюди рядки, якщо з'явиться реальний npm-проєкт.
+# No dependencies - project works out of the box.
+# Add lines here if a real npm project appears.
 
-# Зібрана тека для статичного хостингу: створюється deploy.cmd
-# щоразу заново і в git їй не місце.
+# Compiled folder for static hosting: created by deploy.cmd
+# recreated every time and not belonging in git.
 deploy/
 
-# Адреса бекенда: створюється з секрету репозиторію під час деплою
-# або з tools/local-endpoint.txt під час локального запуску.
+# Backend address: created from a repository secret during deploy
+# or from tools/local-endpoint.txt during local run.
 assets/js/generated/env.js
-tools/local-endpoint.txt
+tools/local-endpoint*.txt
 local-pass.txt
 
-# Справжні коди доступу: живуть у Google Таблиці, але можуть
-# випадково залишитися в нотатках чи скриншотах у робочій гілці.
+# Real access codes: live in Google Sheets, but may
+# accidentally remain in notes or screenshots in the working branch.
 .env
 .env.local
 

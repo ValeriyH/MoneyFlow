@@ -1,14 +1,16 @@
 /**
- * userMenu.js — спливаюче меню опцій під іконкою користувача.
+ * userMenu.js — collapsible options menu under the user icon.
  *
- * Вмісту в себе не має: список пунктів передає main.js. Тому нова
- * можливість додається одним рядком у диспетчері, а не правкою
- * розжки й розсипанням логіки по цьому модулю.
+ * It doesn't contain the items itself: the list is passed by main.js.
+ * Therefore, a new option can be added with a single line in the dispatcher,
+ * rather than by modifying this module's logic.
  *
- * Це розкриття, а не меню за стандартом ARIA: `role="menu"` вимагає
- * керування стрілками й окремої стрічки фокуса, чого тут немає й
- * не потрібно — звичайні кнопки вже працюють Tab-ом і Enter-ом.
- * Обіцяти роль, якої немає, гірше, ніж не обіцяти жодної.
+ * This is a disclosure, not a standard ARIA menu: `role="menu"` requires
+ * arrow key navigation and separate focus management, which is not needed here —
+ * standard buttons already work with Tab and Enter.
+ * Promising a role that doesn't exist is worse than not promising any.
+ *
+ *
  */
 
 import { clearChildren, createElement, on } from "./dom.js";
@@ -16,27 +18,33 @@ import { clearChildren, createElement, on } from "./dom.js";
 /**
  * @typedef {object} UserMenuItem
  * @property {string} id
- * @property {string} label - текст ліворуч
- * @property {() => string} [getValue] - поточне значення праворуч
+ * @property {string} label - text on the left
+ * @property {() => string} [getValue] - current value on the right
  * @property {() => void} onSelect
+ *
+ *
  */
 
 /**
  * @param {object} options
- * @param {HTMLElement} options.triggerElement - що відкриває меню
+ * @param {HTMLElement} options.triggerElement - what opens the menu
  * @param {HTMLElement} options.menuElement
- * @param {HTMLElement} options.nameElement - рядок «під ким увійшли»
+ * @param {HTMLElement} options.nameElement - "logged in as" line
  * @param {UserMenuItem[]} options.items
  * @returns {{ toggle: () => void, close: () => void, isOpen: () => boolean, setName: (name: string) => void }}
+ *
+ *
  */
 export function initUserMenu({ triggerElement, menuElement, nameElement, items }) {
   const listElement = menuElement.querySelector(".user-menu__list");
 
   /**
-   * Меню закривається до виконання дії: після виходу сторінка
-   * перезавантажиться, а після зміни теми лишився б відкритим
-   * попри те, що його вже не видно.
-   */
+   * Menu closes before taking action: after logout, the page
+   * will reload, and after changing the theme, it would remain open
+   * even though it's no longer visible.
+   *
+   *
+ */
   function close() {
     if (menuElement.hidden) return;
 
@@ -45,9 +53,11 @@ export function initUserMenu({ triggerElement, menuElement, nameElement, items }
   }
 
   /**
-   * Пункти будуємо щоразу: значення праворуч (яка тема зараз)
-   * може змінитися, поки меню було закрите.
-   */
+   * Items are built every time: the value on the right (current theme)
+   * might change while the menu was closed.
+   *
+   *
+ */
   function renderItems() {
     clearChildren(listElement);
 
@@ -81,9 +91,9 @@ export function initUserMenu({ triggerElement, menuElement, nameElement, items }
     else close();
   }
 
-  // Подія делегується списку, а не кожній кнопці: пункти
-  // перебудовуються при кожному відкритті, і слухач на них жив би
-  // недовго.
+  // Event is delegated to the list and not to each button: items
+  // are rebuilt every time it's opened, and a listener on them would
+  // only live for a short time.
   on(listElement, "click", (event) => {
     const itemElement = event.target.closest("[data-item]");
     if (!itemElement) return;
@@ -93,17 +103,17 @@ export function initUserMenu({ triggerElement, menuElement, nameElement, items }
 
     close();
 
-    // Кнопка, на якій стояв фокус, щойно зникла. Повертаємо фокус
-    // на те, що меню відкриває: інакше Tab продовжив би з місця,
-    // якого вже немає, тобто з початку сторінки.
+    // The button that had focus just disappeared. Return focus
+    // to what opens the menu: otherwise Tab would continue from a place
+    // that no longer exists, i.e., from the start of the page.
     triggerElement.focus();
     item.onSelect();
   });
 
   on(triggerElement, "click", toggle);
 
-  // Клік поза меню — це подія на документі, а не на контейнері:
-  // меню не може перехопити клік угорі, але й бачити той, що поза ним.
+  // Click outside the menu is a document-level event, not on the container:
+  // the menu cannot catch a click above it, but also doesn't see one outside it.
   on(document, "pointerdown", (event) => {
     if (menuElement.hidden) return;
     if (menuElement.contains(event.target) || triggerElement.contains(event.target)) return;
@@ -115,9 +125,9 @@ export function initUserMenu({ triggerElement, menuElement, nameElement, items }
     if (menuElement.hidden) return;
     if (event.key !== "Escape") return;
 
-    // Фокус повертаємо лише тут. На кліку поза меншим ми не
-    // повертаємо нічого: інакше перехоплювали б фокус у людини,
-    // яка щойно поставила галочку деінде на сторінці.
+    // Focus is returned only here. On click outside the menu, we
+    // return nothing: otherwise we'd steal focus from a user
+    // who just clicked a checkbox somewhere on the page.
     close();
     triggerElement.focus();
   });
@@ -125,6 +135,7 @@ export function initUserMenu({ triggerElement, menuElement, nameElement, items }
   /**
    * @param {string} name
    * @returns {void}
+   *
    */
   function setName(name) {
     nameElement.textContent = name;

@@ -1,36 +1,40 @@
-/**
- * Code.gs — серверна частина MoneyFlow.
+/*
+ * Code.gs — server-side of MoneyFlow.
  *
- * Відповідає за три речі:
- *   doPost(action=loadSnapshot)     — віддає знімок бюджету;
- *   doPost(action=addTransaction)   — додає операцію;
- *   doPost(action=deleteTransaction)— видаляє операцію.
- *   doPost(action=updateTransaction)— переписує операцію на місці.
+ * Responsible for three things:
+ *   doPost(action=loadSnapshot)     — returns a budget snapshot;
+ *   doPost(action=addTransaction)   — adds a transaction;
+ *   doPost(action=deleteTransaction)— deletes a transaction.
+ *   doPost(action=updateTransaction)— overwrites a transaction in place.
  *
- * Авторизація та сесії — в auth.gs: там пароль не залишає браузер,
- * а браузер зберігає лише підписаний сервером токен.
- *
- * ВАЖЛИВО про розгортання:
- *   Execute as:  Me (власник)
- *   Who has access: Anyone
- * Така конфігурація не вимагає OAuth від відвідувача — саме тому
- * запит із браузера проходить без додаткових кроків.
- *
- * Жодних залежностей. Копіюється в редактор Apps Script як є.
+ * Authorization and sessions — in auth.gs: the password doesn't leave the browser,
+* and the browser only stores the server-signed token.
+*
+* IMPORTANT for deployment:
+*   Execute as:  Me (owner)
+*   Who has access: Anyone
+* This configuration doesn't require OAuth from the visitor — that's why
+* the request from the browser passes without additional steps.
+*
+* No dependencies. Copied into the Apps Script editor as is.
  */
 
-/* ── Назви аркушів (мають збігатися з підписами в таблиці) ───────────────── */
+/* ── Sheet names (must match the labels in the table) ────────────────── */
 
 const SHEET_TRANSACTIONS = 'Transactions';
 const SHEET_CATEGORIES = 'Categories';
 const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
+const SHEET_GOALS = 'Goals';
+// Upper bound for one adjustment: protects the sheet from absurd values (1e308, Infinity).
+const MAX_GOAL_ADJUSTMENT = 1000000000;
+const GOAL_LOCK_TIMEOUT_MS = 10000;
 
 /**
- * Часовий пояс для всіх дат і часів.
+ * Timezone for all dates and times.
  *
- * Один рядок замість трьох літералів: зміниться зона — зміниться
- * в одному місці, а не трьох, і одні виправляться, а два ні.
+ * One line instead of three literals: if the zone changes, it changes
+* in one place, not three, and some are fixed, while the two others are not.
  */
 const TIMEZONE = 'Europe/Kyiv';
 
@@ -56,14 +60,23 @@ const HEADER_USER_COLOR = 'Колір';
 const HEADER_USER_PASSWORD_HASH = 'Пароль';
 const HEADER_USER_ACTIVE = 'Активний';
 
+const HEADER_GOAL_ID = 'ID';
+const HEADER_GOAL_NAME = 'Назва';
+const HEADER_GOAL_TARGET_AMOUNT = 'Цільова сума';
+const HEADER_GOAL_CURRENT_AMOUNT = 'Поточна сума';
+const HEADER_GOAL_DEADLINE = 'Дедлайн';
+const HEADER_GOAL_BEGIN_DATE = 'Початок';
+const HEADER_GOAL_TYPE = 'Тип';
+const HEADER_GOAL_ACTIVE = 'Активна';
+
 /*
- * Колонки, без яких аркуш не має сенсу.
+ * Columns without which the sheet makes no sense.
  *
- * Проєкт без зворотної сумісності, тому «стара схема» не підтримується.
- * Натомість кожна зміна повинна валитися одразу й голосно: якщо
- * хтось перейменує колонку, краще явна помилка в журналі, ніж
- * бюджет, який тихо показує нулі. Саме на цьому тричі вже
- * ледь не втратили дані.
+ * The project has no backward compatibility, so the "old scheme" is not supported.
+* Instead, every change must fail immediately and loudly: if
+* someone renames a column, it's better to have an explicit error in the log than
+* a budget that silently shows zeros. This is how we almost
+* lost data three times already.
  */
 const REQUIRED_TRANSACTION_COLUMNS = [
   HEADER_ID, HEADER_DATE, HEADER_CATEGORY,
@@ -79,21 +92,20 @@ const REQUIRED_LIMIT_COLUMNS = [
 ];
 
 /*
- * Скільки місяців дозволяємо просити в одному запиті.
+ * How many months are allowed to be requested in one request.
  *
- * Клієнт надсилає рівно ті місяці, які вже тримає в пам'яті, щоб
- * серверний знімок не витер у нього решту. Обмеження ставить межу
- * тому, що клієнт не може витягнути аркуш цілком одним запитом.
+ * The client sends exactly the months it already has in memory, so
+* the server snapshot doesn't wipe out the rest. The limit prevents
+* the client from pulling the entire sheet in one request.
  */
 const MAX_PERIODS_PER_REQUEST = 12;
 
 /*
- * Запасні рядки з кожного боку потрібної смуги.
+ * Padding rows from each side of the required range.
  *
- * Дати в таблиці зазвичай ідуть по порядку, але запис можна додати
- * заднім числом — тоді він лежатиме поза смугою. Запас покриває
- * такий випадок; фінальна фільтрація все одно точна, зайві рядки
- * просто відкидаються.
+ * Dates in the table usually go in order (which is true for everything that the app itself writes) -
+* all required months' rows stand next to each other — and we read exactly that. Padding covers
+* entries added with a backdate.
  */
 const PERIOD_ROW_WINDOW_PADDING = 60;
 
@@ -101,13 +113,18 @@ const REQUIRED_USER_COLUMNS = [
   HEADER_USER_NAME, HEADER_USER_COLOR, HEADER_USER_PASSWORD_HASH, HEADER_USER_ACTIVE,
 ];
 
-/* ── Самостійна реєстрація ──────────────────────────────────────────────── */
+const REQUIRED_GOAL_COLUMNS = [
+  HEADER_GOAL_ID, HEADER_GOAL_NAME, HEADER_GOAL_TARGET_AMOUNT, HEADER_GOAL_CURRENT_AMOUNT,
+  HEADER_GOAL_DEADLINE, HEADER_GOAL_BEGIN_DATE, HEADER_GOAL_TYPE, HEADER_GOAL_ACTIVE,
+];
+
+/* ── Independent Registration ──────────────────────────────────────────────── */
 
 /**
- * Будь-хто, хто знає адресу Web App, може надіслати заявку.
- * Щоб відкрита реєстрація не перетворилася на сміття, ставимо межі:
- * вони вищі за потреби нормальної сім'ї, але нижі за рівень
- * «скрипт набиває таблицю».
+ * Anyone who knows the Web App address can send a request.
+ * To prevent open registration or spam, we set limits:
+* they are higher than necessary for a normal family, but lower than the level
+* of "script flooding the table."
  */
 const MAX_TOTAL_USERS = 10;
 const MAX_PENDING_USERS = 3;
@@ -115,19 +132,19 @@ const MAX_PENDING_USERS = 3;
 const FLAG_ACTIVE = 'Так';
 const FLAG_INACTIVE = 'Ні';
 
-/** Палітра для випадкових аватарок. */
+/** Palette for random avatars. */
 const USER_AVATAR_COLORS = [
   '#2563eb', '#db2777', '#0f9d58', '#d97706',
   '#0891b2', '#7c3aed', '#65a30d', '#4f46e5',
 ];
 
-/* ── Точка входу ─────────────────────────────────────────────────────────── */
+/* ── Entry Point ─────────────────────────────────────────────────────────── */
 
 /**
- * Єдиний вхід для всіх дій: маршрутизація за полем `action`.
+ * Single entry point for all actions: routing by the `action` field.
  *
- * Окремого doGet немає навмисно — токен не повинен потрапляти в URL,
- * бо URL потрапляє в логи сервера, історію браузера й Referer.
+ * No separate doGet is intentionally omitted — the token must not end up in the URL,
+* because the URL ends up in server logs, browser history, and Referer.
  *
  * @param {Object} request
  * @returns {TextOutput} JSON
@@ -153,8 +170,8 @@ function doPost(request) {
       throw new RequestError('Не вказано дію', 'BAD_REQUEST');
     }
 
-    // Дві дії без сесії: вхід за паролем і реєстрація. Інакше
-    // завести акаунт або отримати сесію було б неможливо.
+    // Two actions without session: password login and registration. Otherwise
+    // establishing an account or getting a session would be impossible.
     if (payload.action === 'requestRegistration') {
       return respondWithJson(Object.assign({ ok: true }, createPendingUser(payload)));
     }
@@ -175,8 +192,8 @@ function doPost(request) {
         return respondWithJson({
           ok: true,
           transaction: appendTransaction(payload.transaction, viewer),
-          // Повертаємо оновлені дані одразу: інакше клієнту
-          // довелося б робити другий запит і чекати ще ~3 секунди.
+          // Return updated data immediately: otherwise the client
+          // would have to make a second request and wait another ~3 seconds.
           snapshot: buildSnapshot(viewer, periods, limitPeriod),
         });
 
@@ -195,6 +212,18 @@ function doPost(request) {
           snapshot: buildSnapshot(viewer, periods, limitPeriod),
         });
 
+      case 'fetchGoals':
+        return respondWithJson({
+          ok: true,
+          goals: fetchGoals(viewer),
+        });
+
+      case 'adjustGoal':
+        return respondWithJson({
+          ok: true,
+          goal: adjustGoal(payload, viewer),
+        });
+
       default:
         throw new RequestError('Невідома дія: ' + payload.action, 'BAD_REQUEST');
     }
@@ -204,16 +233,16 @@ function doPost(request) {
 }
 
 /**
- * Місяць, для якого клієнт хоче бачити бюджет.
+ * Month for which the client wants to see the budget.
  *
- * Це завжди ОДИН місяць — той, що відкритий на екрані. Навіщо окремо
- * від `periods`: запит іде щонайменше на два місяці (відкритий і
- * попередній, для порівняння), а клієнт тримає лише один масив
- * категорій. Якщо взяти ліміти з обох місяців, то жовтневий ліміт
- * показувався б і в вересні, де його ніхто не задавав.
+ * This is always ONE month — the one open on the screen. Why separately
+* from `periods`: the request is sent at least for two months (open and
+* previous, for comparison), and the client holds only one array
+* of categories. If limits from both months are taken, then the October limit
+* would be shown in September, where it was not set.
  *
- * Невірне або відсутнє значення — не помилка: покажемо поточний
- * місяць. Це лише цифра на екрані, не дані.
+ * Not valid or missing value — no error: show the current
+* month. It's only a number on the screen, not data.
  *
  * @param {unknown} rawValue
  * @returns {string}
@@ -223,7 +252,7 @@ function parseLimitPeriod(rawValue) {
 }
 
 /**
- * Ключ поточного місяця «РРРР-ММ» у часовому поясі скрипта.
+ * Key of the current month in the script's timezone.
  * @returns {string}
  */
 function currentPeriodKey() {
@@ -234,17 +263,17 @@ function currentPeriodKey() {
 }
 
 /**
- * Перевіряє список місяців із запиту.
+ * Validates the list of months from the request.
  *
- * Клієнт просить саме ті місяці, які вже тримає в пам'яті: так
- * серверний знімок замінює їх і не зачіпає решту. Якщо список
- * порожній або зовсім не прийшов — беремо поточний місяць, щоб
- * клієнт, який ще не вміє надсилати `periods`, отримав хоча б
- * щось осмислене, а не порожню таблицю.
- *
- * @param {unknown} rawPeriods
- * @returns {Array<string>}
- * @throws {RequestError}
+ * The client requests exactly the months it already has in memory: so
+* the server snapshot replaces them and doesn't touch the rest. If the list
+* is empty or didn't arrive — we take the current month, so that the
+* client, which doesn't know how to send `periods` yet, gets at least
+* something meaningful, and not an empty table.
+*
+* @param {unknown} rawPeriods
+* @returns {Array<string>}
+* @throws {RequestError}
  */
 function parsePeriodsList(rawPeriods) {
   if (rawPeriods === undefined || rawPeriods === null) return [currentPeriodKey()];
@@ -281,16 +310,16 @@ function parsePeriodsList(rawPeriods) {
 }
 
 /**
- * Знімок бюджету для конкретного користувача й набору місяців.
- *
- * Повертається тільки запитані місяці — на п'ятирічній історії це
- * два десятки кілобайт замість двох мегабайтів. Клієнт знає, які
- * місяці прийшли, і замінює ними свої; решту не чіпає.
- *
- * @param {BudgetUser} viewer
- * @param {Array<string>} periods — операції за цими місяцями
- * @param {string} limitPeriod — ліміти саме цього місяця
- * @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, transactions: Array<object> }}
+ * Budget snapshot for a specific user and a set of months.
+*
+* Returns only the requested months — on five-year history this is
+* two dozen kilobytes instead of two megabytes. The client knows which
+* months arrived and replaces its own; the rest is not touched.
+*
+* @param {BudgetUser} viewer
+*   @param {Array<string>} periods — transactions for these months
+*   @param {string} limitPeriod — limits for exactly this month
+*   @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, transactions: Array<object> }}
  */
 function buildSnapshot(viewer, periods, limitPeriod) {
   return {
@@ -299,21 +328,22 @@ function buildSnapshot(viewer, periods, limitPeriod) {
     categories: readCategoriesWithLimits([limitPeriod]),
     periods: periods,
     transactions: readTransactions(periods),
+    goals: fetchGoals(viewer)
   };
 }
 
-/* ── Авторизація ─────────────────────────────────────────────────────────── */
+/* ── Authorization ─────────────────────────────────────────────────────────── */
 
 /**
  * @typedef {{ name: string, color: string, passwordHash: string, isActive: boolean }} BudgetUser
  */
 
 /**
- * Ядро сесій: перевірка токена й пошук користувача.
- * Сам пароль не приходить на сервер у жодному запиті - тільки токен.
- *
+ * Core of sessions: token verification and user search.
+* The password does not arrive on the server in any request - only the token.
+*
  * @param {string} sessionToken
- * @returns {{ name: string, color: string, passwordHash: string, isActive: boolean }}
+* @returns {{ name: string, color: string, passwordHash: string, isActive: boolean }}
  */
 function authenticateSession(sessionToken) {
   const tokenPayload = verifySessionToken(sessionToken);
@@ -323,13 +353,13 @@ function authenticateSession(sessionToken) {
     throw new RequestError('Користувача більше немає в таблиці', 'UNAUTHORIZED');
   }
 
-  // Активність перевіряється щоразу, тому вимкненого користувача
-  // відсікає миттєво, а не наприкінці терміну токена.
+  // Activity is checked every time, so a disabled user
+  // is blocked instantly, and not at the end of the token term.
   if (!user.isActive) {
     throw new RequestError('Акаунт деактивовано', 'UNAUTHORIZED');
   }
 
-  // Токен, виданий до зміни пароля, більше не приймається.
+  // Token issued before the password change is no longer accepted.
   const loginState = readLoginState()[user.name] || {};
   const credentialsChangedAtMs = loginState.credentialsChangedAtMs || 0;
 
@@ -341,12 +371,12 @@ function authenticateSession(sessionToken) {
 }
 
 /**
- * Створює заявку на користувача. Пароль ніде не зберігається -
- * лише його хеш. Аккаунт одразу неактивний: увійти може тільки
- * той, хто має доступ до таблиці й увімкнув рядок.
- *
+ * Creates a user application. The password is nowhere stored -
+* only its hash. The account is immediately inactive: login can only be
+* by the one who has access to the table and enabled the row.
+*
  * @param {{ login: string, passwordHash: string }} payload
- * @returns {{ login: string, isActive: boolean }}
+* @returns {{ login: string, isActive: boolean }}
  */
 function createPendingUser(payload) {
   const userLogin = String(payload.login || '').trim();
@@ -394,29 +424,29 @@ function createPendingUser(payload) {
 }
 
 /**
- * Чи це хеш SHA-256 у шістнадцятковому записі.
- *
- * Єдина перевірка, яку сервер може зробити з паролем на реєстрації:
- * сам пароль сюди не доходить — приходить уже хеш.
- *
- * @param {string} value
- * @returns {boolean}
+ * Is this a SHA-256 hash in hex representation.
+*
+* The only check the server can do with the password during registration:
+* the password itself doesn't arrive here — the hash is already provided.
+*
+* @param {string} value
+* @returns {boolean}
  */
 function isSha256Hex(value) {
   return /^[0-9a-f]{64}$/.test(value);
 }
 
 /**
- * Вмикає або вимикає існуючого користувача.
- *
- * Запускається вручну з редактора, але частіше просто правлять
- * клітинку «Активний» у самій таблиці.
- *
- *   setUserActive('Оля', true);
- *
- * @param {string} userName
- * @param {boolean} isActive
- * @return {string} повідомлення з результатом
+ * Enables or disables an existing user.
+*
+* Often run manually from the editor, but more often simply by changing
+* the "Active" cell in the table itself.
+*
+*   setUserActive('Оля', true);
+*
+* @param {string} userName
+* @param {boolean} isActive
+* @return {string} result message
  */
 function setUserActive(userName, isActive) {
   const trimmedName = String(userName || '').trim();
@@ -425,7 +455,6 @@ function setUserActive(userName, isActive) {
   const usersSheet = getRequiredSheet(SHEET_USERS);
   const usersHeader = readSheetHeader(usersSheet);
   const indexByName = usersHeader.index;
-
   requireSheetColumns(SHEET_USERS, indexByName, [HEADER_USER_NAME, HEADER_USER_ACTIVE]);
 
   const activeColumnIndex = indexByName.get(HEADER_USER_ACTIVE.toLowerCase());
@@ -445,23 +474,23 @@ function setUserActive(userName, isActive) {
 
   throw new Error('Користувача «' + trimmedName + '» не знайдено');
 }
+
 /**
- * Читає аркуш Users.
- *
- * Без колонки «Активний» не можна зрозуміти, хто вже увімкнений,
- * а хто лише зареєструвався. Без «Пароль» — немає з чим порівняти
- * доказ входу. В обох випадках падаємо одразу й голосно: мовчаливий
- * збій тут виглядав би як «невірний пароль», і людина шукала б
- * проблему в своєму голові.
- *
- * ЩО СТОСУЄТЬСЯ ХЕША — свідомо не перевіряється тут. Раніше кидали
- * помилку з ім’ям користувача, у якого хеш некоректний, і це
- * витікало назовні: спроба увійти під чужим логіном відповідала
- * «у користувача Тест некоректний хеш» і тим самим видавала, що
- * такий користувач є. Тепер битий хеш не зупиняє вхід ні для кого,
- * а дізнатися про нього можна через checkUsersIntegrity().
- *
- * @returns {Array<BudgetUser>}
+ * Reads the Users sheet.
+*
+* Without the "Active" column, it's impossible to know who is already enabled,
+* and who just registered. Without "Password" — there's nothing to compare
+* the login proof with. In both cases, we fail immediately and loudly: a silent
+* failure here would look like "wrong password", and the person would look for
+* the problem in their own head.
+*
+* What concerns the HASH — consciously not checked here. Earlier it threw
+* an error with the name of the user whose hash was incorrect, and it leaked
+* out: a login attempt under another's login would return "user Test has incorrect hash"
+* and thus reveal that such a user exists. Now a broken hash doesn't stop entry
+* for anyone, and one can find out about it through checkUsersIntegrity().
+*
+* @returns {Array<BudgetUser>}
  */
 function readUsers() {
   return readSheetAsRecords(SHEET_USERS, REQUIRED_USER_COLUMNS)
@@ -479,15 +508,15 @@ function readUsers() {
 }
 
 /**
- * Перевіряє цілісність аркуша Users і перелічує все, що зламано.
- *
- *   checkUsersIntegrity();
- *
- * Окрема функція, а не перевірка в readUsers, з міркувань безпеки:
- * деталі про конкретних людей не можна віддавати тому, хто просто
- * намагається вгадати логін.
- *
- * @return {string} звіт, видно у виводі редактора
+ * Checks the integrity of the Users sheet and enumerates everything that's broken.
+*
+*   checkUsersIntegrity();
+*
+* A separate function, and not a check in readUsers, for security reasons:
+* details about specific people cannot be given to someone who is simply
+* trying to guess a login.
+*
+* @return {string} report, visible in the editor output
  */
 function checkUsersIntegrity() {
   const users = readUsers();
@@ -513,24 +542,24 @@ function isTruthyFlag(rawValue) {
   return ['так', 'yes', 'true', '1', 'y'].indexOf(normalizedValue) !== -1;
 }
 
-/** @returns {string} колір аватарки з палітри */
+/** @returns {string} avatar color from the palette */
 function pickRandomAvatarColor() {
   const randomIndex = Math.floor(Math.random() * USER_AVATAR_COLORS.length);
   return USER_AVATAR_COLORS[randomIndex];
 }
 
 /**
- * Дописує людину в аркуш Users разом із хешем пароля.
- *
- * Це не серверна логіка - цю функцію запускають вручну з редактора
- * Apps Script, коли в сім'ї з'являється новий користувач:
- *
- *   registerUser('Оля', '#7c3aed', 'Grivna-2026');
- *
- * @param {string} userName — логін, за ним і користувач входить
- * @param {string} userColor — колір аватарки, hex
- * @param {string} userPassword — пароль, який ця людина вводить на сайті
- * @return {string} повідомлення з результатом (видно у виводі)
+ * Appends a person to the Users sheet along with the password hash.
+*
+* This is not server-side logic - this function is run manually from the editor
+* of Apps Script, when a new user appears in the family:
+*
+*   registerUser('Оля', '#7c3aed', 'Grivna-2026');
+*
+* @param {string} userName — the login, by which the user logs in
+* @param {string} userColor — avatar color, hex
+* @param {string} userPassword — the password this person enters on the site
+* @return {string} result message (visible in the output)
  */
 function registerUser(userName, userColor, userPassword) {
   const trimmedName = String(userName || '').trim();
@@ -553,23 +582,22 @@ function registerUser(userName, userColor, userPassword) {
     isActive: true,
   });
 
-  Logger.log('Користувач «' + trimmedName + '» доданий.');
   return 'Користувач «' + trimmedName + '» доданий.';
 }
 
 /**
- * Замінює пароль уже заведеної людини.
- *
- * Старі сесії при цьому перестають діяти: authenticateSession
- * порівнює час видачі токена з часом зміни пароля.
- *
- * Так само запускається вручну з редактора:
- *
- *   resetUserPassword('Оля', 'Nova-Parily-2026');
- *
- * @param {string} userName
- * @param {string} newPassword
- * @return {string} повідомлення з результатом
+ * Replaces the password of an already registered person.
+*
+* Old sessions will stop working: authenticateSession
+* compares the issuance time of the token with the time of the password change.
+*
+* Also run manually from the editor:
+*
+*   resetUserPassword('Оля', 'Nova-Parily-2026');
+*
+* @param {string} userName
+* @param {string} newPassword
+* @return {string} result message
  */
 function resetUserPassword(userName, newPassword) {
   const trimmedName = String(userName || '').trim();
@@ -583,18 +611,17 @@ function resetUserPassword(userName, newPassword) {
   replaceUserPassword(trimmedName, plainPassword);
 
   const result = 'Пароль для «' + trimmedName + '» змінено. Старі сесії завершено.';
-  Logger.log(result);
   return result;
 }
 
 /**
- * Видаляє людину з аркуша Users. Їй більше не вдасться увійти,
- * а вся її минула історія залишається в Transactions.
- *
- *   removeUser('Оля');
- *
- * @param {string} userName
- * @return {string} повідомлення з результатом
+ * Deletes a person from the Users sheet. They will no longer be able to log in,
+* and all their past history remains in Transactions.
+*
+*   removeUser('Оля');
+*
+* @param {string} userName
+* @return {string} result message
  */
 function removeUser(userName) {
   const trimmedName = String(userName || '').trim();
@@ -619,19 +646,19 @@ function removeUser(userName) {
     }
   }
 
-  throw new Error('Користувача «' + trimmedName + '» не знайдено.');
+  throw new Error('Користувача «' + trimmedName + '» не знайдено');
 }
 
-/* ── Читання даних ──────────────────────────────────────────────────────── */
+/* ── Reading data ──────────────────────────────────────────────────────── */
 
 /**
- * Ліміти категорій за вказаними місяцями, у вигляді «категорія → сума».
- *
- * Береться перший збіг для пари «місяць + категорія»: якщо рядок
- * випадково продублювали, та сама категорія не потрапить у бюджет двічі.
- *
- * @param {Array<string>} periods — ключі «РРРР-ММ»
- * @returns {Map<string, number>}
+ * Category limits for the specified months, in the form "category → amount".
+*
+* The first match for the pair "month + category" is taken: if the row
+* was accidentally duplicated, the same category will not enter the budget twice.
+*
+* @param {Array<string>} periods — keys "YYYY-MM"
+* @returns {Map<string, number>}
  */
 function readBudgetLimitsByCategory(periods) {
   const limitsByCategoryName = new Map();
@@ -643,9 +670,9 @@ function readBudgetLimitsByCategory(periods) {
 
     const period = toPeriodKey(rawPeriod);
 
-    // Людина написала щось у місяць, а прочитати не вдалося. Мовчки
-    // пропустити такий рядок означало б «Бюджет = 0» без жодної
-    // підказки — саме те, чого тут уникаємо.
+    // Person wrote something in the month, and it failed to be read. Silently
+    // skipping such a row would mean "Budget = 0" without any
+    // hint — exactly what we avoid here.
     if (!period) {
       throw new RequestError(
         'У аркуші ' + SHEET_BUDGET_LIMITS + ' не вдалося прочитати місяць у значенні ' +
@@ -668,14 +695,14 @@ function readBudgetLimitsByCategory(periods) {
 }
 
 /**
- * Каталог категорій із лімітами на потрібні місяці.
- *
- * Категорія без рядка в `BudgetLimits` лишається в каталозі без ліміта:
- * вона доступна для введення витрат, але не входить у бюджет.
- *
- * @param {Array<string>} periods — ключі «РРРР-ММ»
- * @returns {Array<object>}
- * @throws {RequestError} якщо є ліміт на невідому категорію
+ * Category catalog with limits for the required months.
+*
+* A category without a row in `BudgetLimits` remains in the catalog without a limit:
+* it is available for entering expenses, but it does not enter the budget.
+*
+* @param {Array<string>} periods — keys "YYYY-MM"
+* @returns {Array<object>}
+* @throws {RequestError} if there is a limit for an unknown category
  */
 function readCategoriesWithLimits(periods) {
   const categories = readCategories();
@@ -698,13 +725,13 @@ function readCategoriesWithLimits(periods) {
 }
 
 /**
- * Каталог категорій — без лімітів.
- *
- * Ліміти живуть в окремому аркуші, бо вони належать місяцю, а не
- * категорії. Тому тут лише те, що не змінюється: назва, іконка,
- * колір і прапорець активності.
- *
- * @returns {Array<{ name: string, icon: string, color: string, isActive: string }>}
+ * Category catalog — without limits.
+*
+* Limits live in a separate sheet, because they belong to the month, not the
+* category. Therefore, only what doesn't change is here: name, icon,
+* color and the activity flag.
+*
+* @returns {Array<{ name: string, icon: string, color: string, isActive: string }>}
  */
 function readCategories() {
   return readSheetAsRecords(SHEET_CATEGORIES, REQUIRED_CATEGORY_COLUMNS)
@@ -728,14 +755,14 @@ function readCategories() {
 }
 
 /**
- * Операції лише за вказаними місяцями.
- *
- * Аркуш не читається цілком. Спершу одна колонка з датою — у вісім
- * разів менше клітинок, ніж усі колонки, — щоб знайти межі потрібних
- * місяців. Потім читається тільки смуга рядків між ними.
- *
- * @param {Array<string>} periods — ключі «РРРР-ММ»
- * @returns {Array<object>}
+ * Transactions for only the specified months.
+*
+* The sheet is not read completely. First, one column with the date — in eight
+* times fewer cells than all columns, - to find the boundaries of the required
+* months. Then only the row range between them is read.
+*
+* @param {Array<string>} periods — keys "YYYY-MM"
+* @returns {Array<object>}
  */
 function readTransactions(periods) {
   const sheet = getOptionalSheet(SHEET_TRANSACTIONS);
@@ -768,8 +795,8 @@ function readTransactions(periods) {
     const record = mapRowToRecord(dataRow, columnIndexByName);
     const occurredOn = toIsoDateTime(record[HEADER_DATE]);
 
-    // Чужий місяць просто ігноруємо — він у смузі опинився
-    // через запас на записи, додані заднім числом.
+    // A transaction from another month is just ignored — it ended up in the range
+    // due to the padding for entries added with a backdate.
     if (occurredOn && periods.indexOf(occurredOn.slice(0, 7)) === -1) return;
 
     const amount = toPositiveNumber(record[HEADER_AMOUNT]);
@@ -798,18 +825,18 @@ function readTransactions(periods) {
 }
 
 /**
- * Знаходить смугу рядків, у якій лежать потрібні місяці.
- *
- * Читається тільки колонка з датою. Якщо дати в таблиці йдуть по
- * порядку (а це так для всього, що пише сам застосунок), усі рядки
- * потрібних місяців стоять поруч — і ми читаємо саме їх. Запас
- * з боків покриває записи, додані заднім числом.
- *
+ * Finds the row range where the required months are located.
+*
+* Only the date column is read. If the dates in the table go in
+* order (which is true for everything that the app itself writes), all rows
+* of the required months stand next to each other — and we read exactly them. Padding
+* from the sides covers entries added with a backdate.
+*
  * @param {Sheet} sheet
- * @param {number} lastRowIndex
- * @param {number | undefined} dateColumnIndex — індекс колонки з датою
- * @param {Array<string>} periods
- * @returns {{ firstRow: number, lastRow: number } | null}
+* @param {number} lastRowIndex
+* @param {number | undefined} dateColumnIndex — the index of the date column
+* @param {Array<string>} periods
+* @returns {{ firstRow: number, lastRow: number } | null}
  */
 function findRowRangeByPeriods(sheet, lastRowIndex, dateColumnIndex, periods) {
   if (dateColumnIndex === undefined) return null;
@@ -835,12 +862,12 @@ function findRowRangeByPeriods(sheet, lastRowIndex, dateColumnIndex, periods) {
   };
 }
 
-/* ── Запис даних ─────────────────────────────────────────────────────────── */
+/* ── Writing data ─────────────────────────────────────────────────────────── */
 
 /**
- * @param {object} payload — дані з форми; поле «Користувач» ігнорується
- * @param {BudgetUser} viewer — автентифікований користувач
- * @returns {object} створена або вже наявна операція
+ * @param {object} payload — form data; the "User" field is ignored
+* @param {BudgetUser} viewer — authenticated user
+* @returns {object} created or already present transaction
  */
 function appendTransaction(payload, viewer) {
   if (!payload || typeof payload !== 'object') {
@@ -880,16 +907,16 @@ function appendTransaction(payload, viewer) {
     recordedAt: new Date().toISOString(),
   };
 
-  // Клієнт генерує ID заздалегідь. Якщо запит дійшов двічі — після
-  // обриву зв'язку та повторної відправки з черги — не дублюємо
-  // рядок, а повертаємо те, що вже записано.
+  // The client generates the ID beforehand. If the request arrives twice — after
+  // a connection break and re-sending from the queue — we don't duplicate
+  // the row, but return what was already saved.
   const existingRowIndex = findTransactionRowIndexById(transactionsSheet, transactionId, indexByName);
   if (existingRowIndex !== -1) {
     return createdTransaction;
   }
 
-  // Порядок значень повторює шапку Transactions, де більше немає
-  // колонки «Тип»: доходи не вводяться.
+  // The order of values repeats the Transactions header, where there is no
+  // longer a "Type" column: income is not entered.
   appendRowByColumnNames(transactionsSheet, [
     transactionId,
     occurredOn,
@@ -904,14 +931,14 @@ function appendTransaction(payload, viewer) {
 }
 
 /**
- * Шукає рядок операції за її ID.
- *
- * @param {Sheet} transactionsSheet
- * @param {string} transactionId
- * @param {Map<string, number>} indexByName - індекс шапки, уже прочитаний
- * @returns {number} номер рядка з одиниці або -1
- * @throws {RequestError} якщо немає колонки з ID: мовчки вважати її
- *   відсутньою означало б, що кожен повтор запиту пише дубль.
+ * Finds the transaction row by its ID.
+*
+* @param {Sheet} transactionsSheet
+* @param {string} transactionId
+* @param {Map<string, number>} indexByName - header index, already read
+* @returns {number} row number from one or -1
+* @throws {RequestError} if the ID column is missing: silently assuming it's
+*   missing would mean every repeat request writes a duplicate.
  */
 function findTransactionRowIndexById(transactionsSheet, transactionId, indexByName) {
   const normalizedId = String(transactionId || '').trim();
@@ -940,7 +967,7 @@ function findTransactionRowIndexById(transactionsSheet, transactionId, indexByNa
 
 /**
  * @param {string} transactionId
- */
+ * */
 function deleteTransactionById(transactionId) {
   const normalizedId = String(transactionId || '').trim();
   if (normalizedId === '') {
@@ -961,17 +988,17 @@ function deleteTransactionById(transactionId) {
 }
 
 /**
- * Оновлює існуючу операцію.
- *
- * Правила, які відрізняють її від додавання:
- *
- *   ID не змінюється - за ним запис уже пізнано в таблиці;
- *   «Користувач» не змінюється - операцію внесла та людина, яка
- *     зробила витрату, навіть якщо дату виправив хтось інший;
- *   «Записано» переписується - це час останнього запису про рядок.
- *
- * @param {object} payload
- * @returns {object} оновлена операція
+ * Updates an existing transaction.
+*
+* Rules that distinguish it from addition:
+*
+*   ID does not change - by it the entry is already identified in the table;
+*   "User" does not change - the transaction was made by the person who
+*     made the expense, even if the date was corrected by someone else;
+*   "RecordedAt" is overwritten - this is the time of the last entry about the row.
+*
+* @param {object} payload
+* @returns {object} updated transaction
  */
 function updateTransaction(payload, viewer) {
   if (!payload || typeof payload !== 'object') {
@@ -1023,9 +1050,9 @@ function updateTransaction(payload, viewer) {
   transactionsSheet.getRange(rowIndex, noteColumnIndex + 1, 1, 1).setValue(note);
   transactionsSheet.getRange(rowIndex, recordedAtColumnIndex + 1, 1, 1).setValue(new Date());
 
-  // Користувача не переписуємо, тож у відповідь повертаємо те, що
-  // реально лишилося в рядку. Ехо з payload було б брехнею: клієнт
-  // міг прислати будь-яке ім'я, а сервер його й так проігнорував.
+  // User is not overwritten, so in the response we return what
+  // actually remained in the row. Echo from payload would be a lie: the client
+  // could have sent any name, and the server ignored it anyway.
   const storedUser = String(
     transactionsSheet.getRange(rowIndex, userColumnIndex + 1, 1, 1).getValue() ?? '',
   ).trim();
@@ -1041,28 +1068,28 @@ function updateTransaction(payload, viewer) {
   };
 }
 
-/* ── Допоміжні функції роботи з таблицею ────────────────────────────────── */
+/* ── Helper functions for table work ────────────────────────────────────────── */
 
 /**
- * Индекс колонок аркуша: підпис (у нижньому регістрі) -> позиція.
- *
- * Читає шапку рівно один раз. Кожен getValues() - це виклик до
- * Google, тому шапку треба брати один раз на аркуш, а не на кожну
- * назву колонки: інакше перевірка восьми колонок коштує восьми
- * однакових запитів.
- *
- * @param {Sheet} sheet
- * @returns {{ row: Array<unknown>, index: Map<string, number> }}
+ * Column index of the sheet: label (in lowercase) -> position.
+*
+* Reads the header exactly once. Every getValues() - is a call to
+* Google, so the header should be taken once per sheet, and not for
+* every column name: otherwise checking eight columns would cost eight
+* identical requests.
+*
+* @param {Sheet} sheet
+* @returns {{ row: Array<unknown>, index: Map<string, number> }}
  */
 function readSheetHeader(sheet) {
   return indexHeaderRow(sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
 }
 
 /**
- * Те саме, але з уже прочитаного рядка шапки.
- *
- * @param {Array<unknown>} headerRow
- * @returns {{ row: Array<unknown>, index: Map<string, number> }}
+ * The same, but from an already read header row.
+*
+* @param {Array<unknown>} headerRow
+* @returns {{ row: Array<unknown>, index: Map<string, number> }}
  */
 function indexHeaderRow(headerRow) {
   const indexByName = new Map();
@@ -1078,16 +1105,16 @@ function indexHeaderRow(headerRow) {
 }
 
 /**
- * Падає, якщо в аркуші немає хоча б однієї з перелічених колонок.
- *
- * Нічого не читає: працює з індексом, який уже зібрано.
- * Перевіряє одразу всі відсутні, а не першу нестачу: щоб не
- * доводилося виправляти по одному стовпцю за три заходи.
- *
- * @param {string} sheetName
- * @param {Map<string, number>} indexByName
- * @param {Array<string>} columnNames
- * @throws {RequestError}
+ * Fails if the sheet is missing at least one of the listed columns.
+*
+* Does not read anything: works with the index that is already collected.
+* Checks all missing ones at once, and not the first deficiency: so that it
+* doesn't have to correct one column at a time for three turns.
+*
+* @param {string} sheetName
+* @param {Map<string, number>} indexByName
+* @param {Array<string>} columnNames
+* @throws {RequestError}
  */
 function requireSheetColumns(sheetName, indexByName, columnNames) {
   const missingColumnNames = columnNames.filter(function (columnName) {
@@ -1104,20 +1131,20 @@ function requireSheetColumns(sheetName, indexByName, columnNames) {
 }
 
 /**
- * Читає аркуш у вигляді масиву об'єктів за підписами колонок.
- * Порядок колонок не важливий — важливі лише їхні назви.
- *
- * @param {string} sheetName
- * @param {Array<string>} requiredColumnNames - перевіряються до читання
- * @returns {Array<Record<string, unknown>>}
+ * Reads a sheet as an array of objects by column names.
+* Order of columns does not matter — only their names matter.
+*
+* @param {string} sheetName
+* @param {Array<string>} requiredColumnNames - checked before reading
+* @returns {Array<Record<string, unknown>>}
  */
 function readSheetAsRecords(sheetName, requiredColumnNames) {
   const optionalSheet = getOptionalSheet(sheetName);
   if (!optionalSheet) return [];
 
   if (requiredColumnNames) {
-    // Шапку читаємо один раз і зразу використовуємо і для перевірки,
-    // і для розкладання записів далі.
+    // Header is read once and immediately used both for checking,
+    // and for parsing records further.
     requireSheetColumns(sheetName, readSheetHeader(optionalSheet).index, requiredColumnNames);
   }
 
@@ -1141,10 +1168,10 @@ function readSheetAsRecords(sheetName, requiredColumnNames) {
 }
 
 /**
- * Підписи колонок у індекси. Порядок стовпців у таблиці неважливий.
- *
- * @param {Array<unknown>} headerRow
- * @returns {Record<string, number>}
+ * Column names to indices. Order of columns in the table is not important.
+*
+* @param {Array<unknown>} headerRow
+* @returns {Record<string, number>}
  */
 function buildColumnIndex(headerRow) {
   const columnIndexByName = {};
@@ -1160,11 +1187,11 @@ function buildColumnIndex(headerRow) {
 }
 
 /**
- * Розкладає один рядок за підписами колонок.
- *
- * @param {Array<unknown>} dataRow
- * @param {Record<string, number>} columnIndexByName
- * @returns {Record<string, unknown>}
+ * Parses one row by column names.
+*
+* @param {Array<unknown>} dataRow
+* @param {Record<string, number>} columnIndexByName
+* @returns {Record<string, unknown>}
  */
 function mapRowToRecord(dataRow, columnIndexByName) {
   const record = {};
@@ -1177,16 +1204,16 @@ function mapRowToRecord(dataRow, columnIndexByName) {
 }
 
 /**
- * Додає рядок, попередньо переставивши значення відповідно
- * до підписів колонок у шапці.
- *
- * Значення передаються в порядку шапки, а розкладаються за
- * іменами колонок — тому порядок стовпців у таблиці неважливий.
- *
- * @param {Sheet} sheet
- * @param {Array<unknown>} orderedValues
- * @throws {Error} якщо якийсь підпис не знайдено: краще не записати
- *   нічого, ніж записати хеш не в те стовпці, а в сусіднє.
+ * Appends a row, pre-reordering values according to
+* the column names in the header.
+*
+* Values are passed in header order, and are parsed by
+* column names — so the order of columns in the table is not important.
+*
+* @param {Sheet} sheet
+* @param {Array<unknown>} orderedValues
+* @throws {Error} if some label is not found: better not write
+*   anything, than write a hash not in the column, but in the neighboring.
  */
 function appendRowByColumnNames(sheet, orderedValues, header) {
   const headerRow = (header || readSheetHeader(sheet)).row;
@@ -1223,7 +1250,7 @@ function getOptionalSheet(sheetName) {
 
 /**
  * @param {string} sheetName
- * @returns {Sheet}
+* @returns {Sheet}
  */
 function getRequiredSheet(sheetName) {
   const requiredSheet = getOptionalSheet(sheetName);
@@ -1233,11 +1260,11 @@ function getRequiredSheet(sheetName) {
   return requiredSheet;
 }
 
-/* ── Перетворення значень ────────────────────────────────────────────────── */
+/* ── Value Conversion ────────────────────────────────────────────────── */
 
 /**
  * @param {unknown} rawValue
- * @returns {number} 0, якщо значення не є додатковим числом
+ * @returns {number} 0, if the value is not a positive number
  */
 function toPositiveNumber(rawValue) {
   const parsedValue = Number(rawValue);
@@ -1246,9 +1273,9 @@ function toPositiveNumber(rawValue) {
 }
 
 /**
- * Ключ місяця «РРРР-ММ» із будь-якого вигляду, у якому його могли ввести.
+ * Month key «YYYY-MM» from any format it might have been entered in.
  *
- * Google Sheets перетворює «2026-10» на дату, якщо колонка не
+ * Google Sheets turns «2026-10» into a date if the column is not
  * відформатована як текст. Тоді в таблицю приходить об'єкт Date, а
  * String() з нього дає «Mon Oct 01 2026…» — ключ не збігається
  * ні з чим, і рядок непомітно випадає з бюджету.
@@ -1407,4 +1434,186 @@ function respondWithError(error) {
     },
     isExpectedError ? error.details : {},
   ));
+}
+
+/* ── Helper functions for goal calculations ────────────────────────────────────────── */
+
+/**
+ * Calculates the progress percentage of a goal.
+ *
+ * @param {number} currentAmount — поточна сума
+ * @param {number} targetAmount — цільова сума
+ * @returns {number} відсоток від 0 до 100
+ */
+function calculateGoalProgress(currentAmount, targetAmount) {
+  if (targetAmount <= 0) return 100;
+  const progress = (currentAmount / targetAmount) * 100;
+  return Math.min(100, Math.max(0, Math.round(progress)));
+}
+
+/**
+ * Calculates the monthly amount to be saved to reach a goal by the deadline.
+ * 
+ * Logic:
+ * 1. Start of accumulation = Max(begindate, now) — if the start date has passed, we start now
+ * 2. Count months from the start of accumulation to the deadline (not from beginDate)
+ * 3. If the deadline has already passed — return 0
+ *
+ * @param {number} currentAmount — поточна сума
+ * @param {number} targetAmount — цільова сума
+ * @param {string} beginDate — дата початку (РРРР-ММ-ДД)
+ * @param {string} deadline — дата дедлайну (РРРР-ММ-ДД)
+ * @returns {number} monthly amount, or 0 if the deadline has passed or the goal is reached
+ */
+function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, deadline) {
+  // Dates are compared as «YYYY-MM-DD» strings in the script timezone:
+  // new Date('YYYY-MM-DD') is parsed as UTC, and local getters would then
+  // shift the month for timezones behind UTC.
+  const isoPattern = /^(\d{4})-(\d{2})-(\d{2})/;
+  const beginMatch = String(beginDate || '').match(isoPattern);
+  const deadlineMatch = String(deadline || '').match(isoPattern);
+
+  if (!beginMatch || !deadlineMatch) return 0;
+  if (currentAmount >= targetAmount) return 0;
+
+  const today = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+
+  // If the deadline has already passed — return 0
+  if (deadlineMatch[0] < today) return 0;
+
+  // Start of accumulation = Max(begindate, today) — if the start date has passed, we start now
+  const startMatch = (beginMatch[0] > today ? beginMatch[0] : today).match(isoPattern);
+
+  const remainingAmount = targetAmount - currentAmount;
+
+  // Count months from the start of accumulation to the deadline
+  const monthsDiff = (Number(deadlineMatch[1]) - Number(startMatch[1])) * 12 +
+                     (Number(deadlineMatch[2]) - Number(startMatch[2]));
+  
+  // If months < 1 — calculate as for 1 month
+  const divisor = Math.max(1, monthsDiff);
+  
+  return Math.round(remainingAmount / divisor);
+}
+
+/* ── API функції для цілей ────────────────────────────────────────────────────── */
+
+/**
+ * Retrieves the list of active goals for the user.
+ *
+ * @param {BudgetUser} viewer
+ * @returns {Array<object>} список цілей з розрахунками прогресу та щомісячної суми
+ */
+function fetchGoals(viewer) {
+  const records = readSheetAsRecords(SHEET_GOALS, REQUIRED_GOAL_COLUMNS);
+  
+  return records
+    .filter(function (record) {
+      return isTruthyFlag(record[HEADER_GOAL_ACTIVE]);
+    })
+    .map(function (record) {
+      const current = toPositiveNumber(record[HEADER_GOAL_CURRENT_AMOUNT]);
+      const target = toPositiveNumber(record[HEADER_GOAL_TARGET_AMOUNT]);
+      const begin = toIsoDate(record[HEADER_GOAL_BEGIN_DATE]);
+      const deadline = toIsoDate(record[HEADER_GOAL_DEADLINE]);
+
+      return {
+        id: String(record[HEADER_GOAL_ID] || '').trim(),
+        name: String(record[HEADER_GOAL_NAME] || '').trim(),
+        deadline: deadline,
+        type: String(record[HEADER_GOAL_TYPE] || '').trim(),
+        active: isTruthyFlag(record[HEADER_GOAL_ACTIVE]),
+        progress: calculateGoalProgress(current, target),
+        monthlyRequirement: calculateMonthlyRequirement(current, target, begin, deadline),
+      };
+    });
+}
+
+/**
+ * Adjusts the current amount of a goal (adds or subtracts).
+ *
+ * @param {object} payload — { id, amount }
+ * @param {BudgetUser} viewer
+ * @returns {object} оновлена ціль
+ */
+function adjustGoal(payload, viewer) {
+  const adjustment = Number(payload.amount);
+  if (!isFinite(adjustment) || adjustment === 0 || Math.abs(adjustment) > MAX_GOAL_ADJUSTMENT) {
+    throw new RequestError('Некоректна сума коригування', 'BAD_REQUEST');
+  }
+
+  const sheet = getRequiredSheet(SHEET_GOALS);
+  const indexByName = readSheetHeader(sheet).index;
+  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
+
+  // Read-modify-write of the cell: without the lock two simultaneous
+  // adjustments read the same value and one of them is lost.
+  const lock = LockService.getScriptLock();
+  lock.waitLock(GOAL_LOCK_TIMEOUT_MS);
+
+  try {
+    const rowIndex = findGoalRowIndexById(sheet, payload.id, indexByName);
+    if (rowIndex === -1) {
+      throw new RequestError('Ціль з таким ID не знайдено', 'BAD_REQUEST');
+    }
+
+    const currentAmount = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
+    const newAmount = Math.max(0, Math.round((currentAmount + adjustment) * 100) / 100);
+
+    sheet.getRange(rowIndex, currentColumnIndex + 1).setValue(newAmount);
+    SpreadsheetApp.flush();
+
+    return buildAdjustedGoal(sheet, rowIndex, indexByName, payload.id);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Reads back the adjusted goal row and calculates its progress.
+ *
+ * @param {Sheet} sheet
+ * @param {number} rowIndex — 1-based row number
+ * @param {Map<string, number>} indexByName
+ * @param {string} id
+ * @returns {object} { id, progress, monthlyRequirement }
+ */
+function buildAdjustedGoal(sheet, rowIndex, indexByName, id) {
+  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
+  const beginColumnIndex = indexByName.get(HEADER_GOAL_BEGIN_DATE.toLowerCase());
+  const updatedCurrent = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
+  const target = toPositiveNumber(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_TARGET_AMOUNT.toLowerCase()) + 1).getValue());
+  const begin = toIsoDate(sheet.getRange(rowIndex, beginColumnIndex + 1).getValue());
+  const deadline = toIsoDate(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_DEADLINE.toLowerCase()) + 1).getValue());
+
+  return {
+    id: id,
+    progress: calculateGoalProgress(updatedCurrent, target),
+    monthlyRequirement: calculateMonthlyRequirement(updatedCurrent, target, begin, deadline),
+  };
+}
+
+/**
+ * Finds the index of the goal row by its ID.
+ *
+ * @param {Sheet} sheet
+ * @param {string} id
+ * @param {Map<string, number>} indexByName
+ * @returns {number} номер рядка або -1
+ */
+function findGoalRowIndexById(sheet, id, indexByName) {
+  const normalizedId = String(id || '').trim();
+  if (normalizedId === '') return -1;
+
+  const lastRowIndex = sheet.getLastRow();
+  if (lastRowIndex < 2) return -1;
+
+  const idColumnIndex = indexByName.get(HEADER_GOAL_ID.toLowerCase());
+  const idValues = sheet.getRange(2, idColumnIndex + 1, lastRowIndex - 1, 1).getValues();
+
+  for (let i = 0; i < idValues.length; i++) {
+    if (String(idValues[i][0]).trim() === normalizedId) return i + 2;
+  }
+
+  return -1;
 }

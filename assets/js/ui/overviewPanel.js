@@ -1,7 +1,9 @@
 /**
- * overviewPanel.js — підсумки місяця: залишок від бюджету, витрати,
- * середні за день, прогноз і динаміка до попереднього місяця,
- * а також кільцевий розподіл витрат по категоріях.
+ * overviewPanel.js — monthly summary: balance remaining from budget, spending,
+ * average per day, projection, and dynamics compared to the previous month,
+ * as well as a donut distribution of spending by categories.
+ *
+ *
  */
 
 import { computeDailyAllowance } from "../domain/budget.js";
@@ -14,7 +16,7 @@ import {
 import { buildPeriodSummary } from "../domain/statistics.js";
 import { clearChildren, createElement, findById, setVisibility } from "./dom.js";
 
-/** Скільки категорій показувати в легенді — решта йде в «та ще N». */
+/** Number of categories to show in the legend — the rest go into "and other N". */
 const LEGEND_CATEGORY_LIMIT = 6;
 
 /** @returns {{ render: (state: Readonly<object>) => void }} */
@@ -51,9 +53,9 @@ export function initOverviewPanel() {
   }
 
   /**
-   * Головне число — залишок від бюджету. Під ним не «скільки операцій»,
-   * а практична порада: скільки можна витрачати на день, щоб вкластися.
-   * Рахується по загальному залишку, без розрізнення категорій.
+   * Main number — the balance remaining from the budget. Below it is not "how many transactions",
+   * but a practical advice: how much you can spend per day to stay within budget.
+   * Calculated based on total balance, without distinction by categories.
    *
    * @param {ReturnType<typeof buildPeriodSummary>} summary
    * @param {string} periodKey
@@ -75,8 +77,8 @@ export function initOverviewPanel() {
   function buildBalanceMeta(summary, periodKey, referenceDate) {
     const dailyAllowance = computeDailyAllowance(summary.balance, periodKey, referenceDate);
 
-    // Минулий місяць уже завершився — «на день можна» тут ні до чого,
-    // тож лишаємо те, що про нього правда: скільки в ньому операцій.
+    // Previous month has already finished — "daily allowance" doesn't make sense here,
+    // so we keep what is true about it: how many transactions were in it.
     if (dailyAllowance === null) {
       return summary.transactionCount === 0
         ? "Операцій за цей місяць ще немає"
@@ -116,12 +118,12 @@ export function initOverviewPanel() {
 
     projectionValueElement.textContent = formatCurrency(summary.projectedExpenseTotal);
 
-    // Це витрати, а не залишок, - тому завжди червоним, незалежно
-    // від порівняння з минулим місяцем.
+    // These are expenses, not balances, - so they are always red, regardless
+    // of the comparison with the previous month.
     projectionValueElement.dataset.tone = "negative";
 
-    // Розбіжність між назвою й цифрою тут була постійною скаргою,
-    // тому в підказці прямо розписано, як число отримано.
+    // There was a constant complaint about the mismatch between the label and the number,
+    // so the tooltip explicitly describes how the number was obtained.
     projectionValueElement.title =
       `Зараз ${formatCurrency(summary.dailyAverageExpense)} на день.\n` +
       `Якщо витрачатимете так само весь місяць — ` +
@@ -191,9 +193,10 @@ export function initOverviewPanel() {
   }
 
   /**
-   * Кільце з секторів через conic-gradient — без зовнішніх бібліотек.
+   * Ring with sectors using conic-gradient — without external libraries.
    * @param {Array<{ color: string, share: number }>} categoryBreakdown
-   * @returns {string} значення CSS-властивості background
+   * @returns {string} value of the CSS property background
+   *
    */
   function buildDonutGradient(categoryBreakdown) {
     const gradientStops = [];
@@ -212,6 +215,7 @@ export function initOverviewPanel() {
   /**
    * @param {{ name: string, color: string, total: number, share: number }} categoryShare
    * @returns {HTMLElement}
+   *
    */
   function createLegendItem(categoryShare) {
     const legendItemElement = createElement("li", { className: "legend__item" });

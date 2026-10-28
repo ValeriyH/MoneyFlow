@@ -1,28 +1,32 @@
 /**
- * budget.js — порівняння витрат із плановими лімітами.
+ * budget.js — comparing expenses with planned limits.
  *
- * Ліміт має категорія на конкретний місяць і живе в аркуші
- * `BudgetLimits`, тому код лише рахує, а не зберігає правила.
+ * A category's limit is set for a specific month and lives in the
+ * `BudgetLimits` sheet, so this code only performs calculations, not rule storage.
  *
- * Наявність ліміта й активність категорії — різні речі:
- * ліміт каже «скільки на неї запланували цього місяця»,
- * а активність — «нею взагалі користуються». Категорія без ліміта
- * лишається доступною для введення витрат.
+ * The presence of a limit and the activity of a category are different things:
+ * a limit says "how much was planned for it this month", while activity means
+ * "it is used at all". A category without a limit remains available for
+ * expense entry.
+ *
+ *
  */
-
+ 
 import { BUDGET_WARNING_THRESHOLD } from "../config.js";
 import { isCurrentPeriod, remainingDaysInPeriod } from "./period.js";
 import { filterTransactionsByPeriod } from "./statistics.js";
-
+ 
 /**
- * Значення колонки «Активна», які означають «категорія показується».
+ * Values for the "Active" column that mean "category is displayed".
  *
- * Порожнє значення теж вважається «так»: щоб додати категорію,
- * достатньо заповнити назву, іконку й колір, а «Активна» —
- * лише коли ви ховаєте категорію.
+ * An empty value is also considered "true": to add a category, it is
+ * sufficient to fill the name, icon, and color, and "Active" is
+ * only used when you want to hide a category.
+ *
+ *
  */
 const ACTIVE_TRUE_VALUES = ["так", "yes", "true", "1", "активна", "активний"];
-
+ 
 /**
  * @param {object} category
  * @returns {boolean}
@@ -32,7 +36,7 @@ export function isCategoryActive(category) {
   if (rawValue === "") return true;
   return ACTIVE_TRUE_VALUES.includes(rawValue);
 }
-
+ 
 /**
  * @param {Array<object>} categories
  * @returns {Array<object>}
@@ -40,22 +44,22 @@ export function isCategoryActive(category) {
 export function filterActiveCategories(categories) {
   return categories.filter(isCategoryActive);
 }
-
-/** Стан ліміту відносно витраченого. */
+ 
+/** Limit status relative to spent amount. */
 export const BUDGET_STATUS = {
-  /** Витрачено менше порогу попередження. */
+  /** Spent less than the warning threshold. */
   safe: "safe",
-  /** Витрачено близько ліміту. */
+  /** Spent close to the limit. */
   warning: "warning",
-  /** Ліміт перевищено. */
+  /** Limit exceeded. */
   exceeded: "exceeded",
 };
-
+ 
 /**
- * Обирає категорії, для яких на цей місяць задано ліміт, і рахує стан.
+ * Selects categories for which a limit is set for this month and calculates status.
  *
- * @param {Array<object>} categories — увесь каталог категорій
- * @param {Array<object>} allTransactions — усі операції бюджету
+ * @param {Array<object>} categories — the entire category catalog
+ * @param {Array<object>} allTransactions — all budget operations
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {Array<{
@@ -64,10 +68,12 @@ export const BUDGET_STATUS = {
  *   usageRatio: number, status: string,
  *   dailyAllowance: number | null, note: string,
  * }>}
+ *
+ *
  */
 export function buildBudgetReport(categories, allTransactions, periodKey, referenceDate = new Date()) {
   const periodExpenses = filterTransactionsByPeriod(allTransactions, periodKey);
-
+ 
   const spentByCategory = new Map();
   for (const expense of periodExpenses) {
     spentByCategory.set(
@@ -75,7 +81,7 @@ export function buildBudgetReport(categories, allTransactions, periodKey, refere
       (spentByCategory.get(expense.category) ?? 0) + expense.amount,
     );
   }
-
+ 
   return categories
     .filter((category) => category.limit > 0)
     .map((category) => {
@@ -83,7 +89,7 @@ export function buildBudgetReport(categories, allTransactions, periodKey, refere
       const remaining = category.limit - spent;
       const usageRatio = spent / category.limit;
       const status = resolveBudgetStatus(usageRatio);
-
+ 
       return {
         name: category.name,
         icon: category.icon,
@@ -99,68 +105,76 @@ export function buildBudgetReport(categories, allTransactions, periodKey, refere
     })
     .sort((left, right) => right.usageRatio - left.usageRatio);
 }
-
+ 
 /**
- * @param {number} usageRatio — частка використаного ліміту
- * @returns {string} значення BUDGET_STATUS
+ * @param {number} usageRatio — fraction of spent limit
+ * @returns {string} BUDGET_STATUS value
+ *
+ *
  */
 export function resolveBudgetStatus(usageRatio) {
   if (usageRatio >= 1) return BUDGET_STATUS.exceeded;
   if (usageRatio >= BUDGET_WARNING_THRESHOLD) return BUDGET_STATUS.warning;
   return BUDGET_STATUS.safe;
 }
-
+ 
 /**
- * Скільки можна витрачати на день, щоб вкластися в суму.
+ * How much can be spent per day to stay within the amount.
  *
- * Для завершених місяців не має сенсу — повертає null.
+ * Doesn't make sense for completed months — returns null.
  *
- * Використовується двічі: для кожної категорії окремо і для
- * загального залишку від бюджету. Формула одна й та сама —
- * тому й винесено в одне місце.
+ * Used twice: separately for each category and for the total
+ * remaining budget. The formula is the same — that is why it is
+ * extracted to a single place.
  *
  * @param {number} remainingAmount
  * @param {string} periodKey
  * @param {Date} referenceDate
  * @returns {number | null}
+ *
+ *
  */
 export function computeDailyAllowance(remainingAmount, periodKey, referenceDate) {
   if (!isCurrentPeriod(periodKey, referenceDate)) return null;
-
+ 
   const remainingDays = remainingDaysInPeriod(periodKey, referenceDate);
   return remainingDays > 0 ? remainingAmount / remainingDays : 0;
 }
-
+ 
 /**
- * Коротке людське пояснення під прогрес-баром.
+ * Short human-readable explanation for the progress bar.
  * @param {string} status
  * @param {number} remainingAmount
  * @param {number} usageRatio
  * @param {string} periodKey
  * @param {Date} referenceDate
  * @returns {string}
+ *
+ *
  */
 function buildBudgetNote(status, remainingAmount, usageRatio, periodKey, referenceDate) {
   if (status === BUDGET_STATUS.exceeded) {
     return `Перевищено на ${Math.round((usageRatio - 1) * 100)}%`;
   }
-
+ 
   if (!isCurrentPeriod(periodKey, referenceDate)) {
     return status === BUDGET_STATUS.safe ? "В межах ліміту" : "Близько до ліміту";
   }
-
+ 
   if (status === BUDGET_STATUS.warning) {
     return `Залишилось ${Math.max(remainingAmount, 0)} ₴ — останні ${Math.round((1 - usageRatio) * 100)}%`;
   }
-
+ 
   return `Залишилось ${Math.round(remainingAmount)} ₴`;
 }
-
+ 
 /**
- * Загальний стан усіх лімітів для бейджа «3 з 5 перевищено».
+ * Overall status of all limits for the "3 of 5 exceeded" badge.
  *
  * @param {Array<object>} budgetReport
  * @returns {{ totalCount: number, exceededCount: number, remainingAmount: number }}
+ *
+ *
  */
 export function summarizeBudgetReport(budgetReport) {
   return budgetReport.reduce(

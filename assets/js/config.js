@@ -1,33 +1,33 @@
 /**
- * config.js — налаштування застосунку.
+ * config.js — application configuration.
  *
- * Тут лише те, що не залежить від середовища: пороги, пресети,
- * ключі сховища. Адреса бекенда тут немає — вона приходить
- * з assets/js/generated/env.js, який створюється під час розгортання
- * (GitHub Actions) або локально (tools/serve.ps1) і не потрапляє у git.
- */
+ * This file contains only environment-independent values: thresholds, presets,
+ * and storage keys. The backend address is not here — it arrives from
+ * assets/js/generated/env.js, which is created during deployment
+ * (GitHub Actions) or locally (tools/serve.ps1) and is not committed to git.
+ *  */
 
 /**
- * Значення з assets/js/generated/env.js.
- * Файл підключається звичайним <script> до main.js і заповнює
- * глобальну змінну. Якщо його немає — значить, середовище не налаштовано.
+ * Values from assets/js/generated/env.js.
+ * The file is included via a standard <script> in main.js and populates
+ * a global variable. If it is missing, it means the environment is not configured.
  *
  * @type {{ APPS_SCRIPT_ENDPOINT?: string } | undefined}
- */
+ *  */
 const injectedEnvironment = window.__MONEYFLOW_ENV__;
 
 /**
- * Адреса розгорнутого Web App (Google Apps Script).
+ * Address of the deployed Web App (Google Apps Script).
  * @type {string}
- */
+ *  */
 export const APPS_SCRIPT_ENDPOINT = injectedEnvironment?.APPS_SCRIPT_ENDPOINT ?? "";
 
-/** @returns {boolean} чи середовище взагалі налаштовано */
+/** @returns {boolean} whether the environment is configured at all */
 export function isEnvironmentConfigured() {
   return APPS_SCRIPT_ENDPOINT.startsWith("https://");
 }
 
-/** Ключі, під якими дані лежать у localStorage цього браузера. */
+/** Keys under which data is stored in this browser's localStorage. */
 export const STORAGE_KEYS = {
   session: "moneyflow.session",
   clockOffset: "moneyflow.clock-offset",
@@ -39,28 +39,28 @@ export const STORAGE_KEYS = {
 };
 
 /**
- * Вигляд застосунку.
+ * Application look.
  *
- * `classic` — звичайний світлий, буквальний стиль.
- * `solid` — новий: темна тема і суцільна навігація.
+ * `classic` — standard light, literal style.
+ * `solid` — new: dark theme and solid navigation.
  *
- * Тримаємо обидва, поки новий не відточений: родині звичка важливіша
- * за свіжий дизайн, а перемикач коштує одного рядка.
- */
+ * We keep both until the new one is polished: family habit is more important
+ * than fresh design, and the toggle costs only one line.
+ *  */
 export const UI_STYLE_CLASSIC = "classic";
 export const UI_STYLE_SOLID = "solid";
 
 /**
- * Початок ключа черги. Далі дописується логін:
+ * Start of the queue key. Suffix is the login:
  * `moneyflow.pending-entries.оля`.
  *
- * Черга належить конкретній людині. Один браузер може користуватися
- * друзі й дружина: якщо б черга була спільною, записи одного
- * відправилися б від імені іншого — сервер бере користувача з токена.
- */
+ * The queue belongs to a specific person. One browser can be used by
+ * family members: if the queue were shared, entries from one
+ * would be sent on behalf of another — the server takes the user from the token.
+ *  */
 export const PENDING_ENTRIES_KEY_PREFIX = "moneyflow.pending-entries.";
 
-/** Стани синхронізації між браузером і Google Таблицею. */
+/** Synchronization states between the browser and the Google Sheet. */
 export const SYNC_STATE = {
   loading: "loading",
   synced: "synced",
@@ -69,7 +69,7 @@ export const SYNC_STATE = {
   error: "error",
 };
 
-/** Текст, який бачить користувач для кожного стану синхронізації. */
+/** Text the user sees for each synchronization state. */
 export const SYNC_STATE_LABELS = {
   [SYNC_STATE.loading]: "Завантаження…",
   [SYNC_STATE.synced]: "Синхронізовано",
@@ -78,40 +78,39 @@ export const SYNC_STATE_LABELS = {
   [SYNC_STATE.error]: "Помилка",
 };
 
-/**
- * Таймаут запиту до Google Apps Script, мс.
+/** Request timeout to Google Apps Script, ms.
  *
- * Щойно розгорнутий скрипт «прогрівається» 10-20 секунд, і холодний
- * старт Apps Script легко перевищує 15 секунд. Ставимо з запасом.
- */
+ * A newly deployed script "warms up" for 10-20 seconds, and a cold
+ * start of Apps Script can easily exceed 15 seconds. We set it with a margin.
+ *  */
 export const REQUEST_TIMEOUT_MS = 30000;
 
-/**
- * Мінімальна довжина пароля.
+/** Minimum password length.
  *
- * Дублює MIN_PASSWORD_LENGTH в apps-script/auth.gs: клієнт показує
- * вимогу раніше, ніж людина встигне натиснути «Увійти». Значення
- * має збігатися з серверним.
- */
+ * Duplicates MIN_PASSWORD_LENGTH in apps-script/auth.gs: the client shows
+ * the requirement before the user even hits "Login". The value
+ * must match the server one.
+ *  */
 export const MIN_PASSWORD_LENGTH = 10;
 
-/** Скільки операцій показувати у списку «Останні операції». */
+/** Number of transactions to show in the "Latest transactions" list. */
 export const HISTORY_PAGE_SIZE = 25;
 
-/** Поріг, за якого ліміт вважається «майже вичерпаним», частка від 1. */
+/** Threshold above which a limit is considered "almost exhausted", fraction of 1. */
 export const BUDGET_WARNING_THRESHOLD = 0.8;
 
 /**
- * Розділи, між якими перемикаються таби.
- * Ключ має збігатися з `data-panel` відповідної картки в index.html.
+ * Sections between which tabs switch.
+ * The key must match the `data-panel` of the corresponding card in index.html.
  *
- * Введення витрати розділом не є: форма присутня на екрані завжди,
- * щоб результат введення був видно без перемикання.
- */
+ * Entering an expense by section is not a flow: the form is always on the screen,
+ * so the input result is visible without switching.
+ *  */
 export const APP_VIEWS = {
   dashboard: "dashboard",
   transactions: "transactions",
+  goals: "goals",
 };
 
-/** Розділ, який показується, коли в пам'яті нічого немає. */
+/** Section displayed when there is nothing in memory. */
 export const DEFAULT_APP_VIEW = APP_VIEWS.dashboard;

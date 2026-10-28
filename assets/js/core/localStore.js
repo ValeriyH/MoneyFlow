@@ -1,20 +1,22 @@
 /**
- * localStore.js — безпечна обгортка над сховищем браузера.
+ * localStore.js — a secure wrapper around the browser's storage.
  *
- * Причина існування: сховище кидає винятки у приватному режимі Safari
- * і переповнюється. Тому кожна операція проходить через `try/catch`,
- * а приватний режим не ламає весь застосунок.
+ * Reason for existence: storage throws exceptions in Safari's private mode
+ * and overflows. Thus, every operation goes through `try/catch`,
+ * and private mode doesn't break the whole app.
  *
- * ── Одне сховище ────────────────────────────────────────────────────────────
+ * ── One storage ────────────────────────────────────────────────────────────
  *
- * `localStorage`, і все живе там: сесія, черга несинхронізованих
- * записів і кеш знімка. Кеш обмежено трьома останніми місяцями —
- * див. `CACHED_MONTHS_LIMIT` у `budgetStore`.
+ * `localStorage`, and everything lives there: session, a queue of 
+* unsynchronized entries, and a snapshot cache. The cache is limited 
+* to the last three months — see `CACHED_MONTHS_LIMIT` in `budgetStore`.
  *
- * Раніше кеш лежав у `sessionStorage`, щоб історія не залишалася на
- * диску. Відмовилися від цього разом із офлайном: без кешу на
- * диску застосунок у метро просто не відкривається, а тримати
- * двадцять місяців замість трьох нічого не додає.
+ * Previously, the cache was in `sessionStorage` so that history didn't 
+* stay on disk. We moved away from this with offline support: without 
+* a disk cache, the app simply won't open in the subway, and keeping 
+* twenty months instead of three doesn't add anything.
+ *
+ *
  */
 
 import { PENDING_ENTRIES_KEY_PREFIX, STORAGE_KEYS } from "../config.js";
@@ -38,7 +40,7 @@ function readFrom(storage, storageKey, fallbackValue) {
  * @param {Storage} storage
  * @param {string} storageKey
  * @param {unknown} value
- * @returns {boolean} — чи вдалося записати
+ * @returns {boolean} — whether it succeeded
  */
 function writeTo(storage, storageKey, value) {
   try {
@@ -58,7 +60,7 @@ function removeFrom(storage, storageKey) {
   try {
     storage.removeItem(storageKey);
   } catch {
-    /* приватний режим — немає чого видаляти */
+    /* private mode — nothing to delete */
   }
 }
 
@@ -88,11 +90,11 @@ function removeValue(storageKey) {
   removeFrom(window.localStorage, storageKey);
 }
 
-/* ── Сесія ───────────────────────────────────────────────────────────────── */
+/* -- Session ------------------------------------------------------------------ */
 
 /**
- * Токен і логин зберігаються разом, а не окремо: так вони не можуть
- * розійтися. Токен сам по собі не каже, чия це черга.
+ * Token and login are stored together, not separately: they cannot
+ * diverge. The token alone doesn't tell whose queue it is.
  *
  * @returns {{ token: string, login: string } | null}
  */
@@ -120,14 +122,14 @@ export function forgetSession() {
   removeValue(STORAGE_KEYS.session);
 }
 
-/* ── Зсув годинника ─────────────────────────────────────────────────────── */
+/* -- Clock Offset ------------------------------------------------------------ */
 
 /**
- * Різниця між серверним і локальним часом у мс.
+ * Difference between server and local time in ms.
  *
- * Потрібна для доказу входу: він прив'язаний до часу, і без
- * поправки телефон із хибним годинником не ввійде. Відповідь
- * сервера — єдине джерело, звідки цю різницю можна взяти.
+ * Needed for the login proof: it's tied to the time, and without
+ * correction, a phone with a wrong clock won't log in. The server
+ * response is the only source from which this difference can be taken.
  *
  * @returns {number}
  */
@@ -145,18 +147,18 @@ export function saveClockOffset(offsetMs) {
 }
 
 /**
- * Час «зараз» з урахуванням відомої різниці.
+ * Time "now" with the known difference.
  * @returns {number}
  */
 export function currentServerAlignedTime() {
   return Date.now() + loadClockOffset();
 }
 
-/* ── Черга несинхронізованих операцій ───────────────────────────────────── */
+/* -- Queue of unsynchronized operations --------------------------------------- */
 
 /**
- * Черга окрема на кожного користувача: записи, зроблені під одним
- * логіном, не можуть потрапити в таблицю від імені іншого.
+ * The queue is separate for each user: records made under one
+ * login cannot end up in the table for another user.
  *
  * @param {string | null} login
  * @returns {string}
@@ -167,7 +169,7 @@ function pendingEntriesKey(login) {
 
 /**
  * @param {string | null} login
- * @returns {Array<object>} операції, які ще не дійшли до таблиці
+ * @returns {Array<object>} operations that haven't reached the table yet
  */
 export function loadPendingEntries(login) {
   const storedEntries = readJsonValue(pendingEntriesKey(login), []);
@@ -185,18 +187,18 @@ export function savePendingEntries(login, pendingEntries) {
 
 /**
  * @param {string | null} login
- * @returns {boolean} чи є для цього логіна записи в черзі
+ * @returns {boolean} whether there are records in the queue for this login
  */
 export function hasPendingEntries(login) {
   return loadPendingEntries(login).length > 0;
 }
 
-/* ── Вигляд застосунку ──────────────────────────────────────────────────── */
+/* -- App View ------------------------------------------------------------------ */
 
 /**
- * Активний таб на мобільному. На десктопі табів немає, але вибраний
- * розділ запам'ятовується — щоб не скидати на «Ввід» при кожному
- * відкритті на телефоні.
+ * Active tab on mobile. On desktop, there are no tabs, but the 
+ * selected section is remembered — so it's not reset to "Input"
+ * every time on a phone.
  *
  * @param {string} viewName
  * @returns {void}
@@ -211,7 +213,7 @@ export function loadActiveView() {
 }
 
 /**
- * @returns {Set<string>} ключі згорнутих карток
+ * @returns {Set<string>} keys of collapsed cards
  */
 export function loadCollapsedCards() {
   const storedKeys = readJsonValue(STORAGE_KEYS.collapsedCards, []);
@@ -226,7 +228,7 @@ export function saveCollapsedCards(collapsedCardKeys) {
   writeJsonValue(STORAGE_KEYS.collapsedCards, [...collapsedCardKeys]);
 }
 
-/* ── Обраний місяць ─────────────────────────────────────────────────────── */
+/* -- Selected Month ---------------------------------------------------------- */
 
 /**
  * @param {string} periodKey — «2026-10»
@@ -241,20 +243,20 @@ export function loadActivePeriod() {
   return readJsonValue(STORAGE_KEYS.activePeriod, null);
 }
 
-/* ── Кеш останнього знімка ─────────────────────────────────────────────── */
+/* -- Cache of Last Snapshot --------------------------------------------------- */
 
 /**
- * Останній успішно завантажений знімок потрібен, щоб показати дані
- * одразу при відкритті — і щоб застосунок взагалі відкрився без
- * мережі: оболонка приходить із кешу service worker'а, а дані —
- * звідси.
- *
- * Живе у localStorage, а не у sessionStorage. Раніше це було
- * свідомою відмовою від офлайну: вся історія витрат лежала б на
- * диску відкритим текстом. Зараз тримаємо обмежене вікно — див.
- * `CACHED_MONTHS_LIMIT` — і погоджуємо, що резервна копія телефону
- * його забиратиме.
- *
+ * The last successfully loaded snapshot is needed to show data
+ * immediately upon opening — and to ensure the app opens at all
+* without a network: the shell comes from the service worker cache,
+* and data comes from here.
+*
+* It lives in localStorage, not in sessionStorage. Previously this was
+* a conscious choice against offline: the entire history of expenses
+* would stay on disk in plain text. Now we keep a limited window — see
+* `CACHED_MONTHS_LIMIT` — and agree that the phone's backup
+* will take it.
+*
  * @returns {{ viewer: object, categories: Array<object>, transactions: Array<object>, loadedPeriods: Array<string>, lastSyncedAt: string } | null}
  */
 export function loadCachedSnapshot() {
@@ -275,10 +277,10 @@ export function clearCachedSnapshot() {
   removeValue(STORAGE_KEYS.cachedSnapshot);
 }
 
-/* ── Вигляд ──────────────────────────────────────────────────────────────── */
+/* -- Appearance --------------------------------------------------------------- */
 
 /**
- * @returns {string | null} збережений вигляд або null, якщо ще не вибирали
+ * @returns {string | null} saved style or null if not chosen yet
  */
 export function loadUiStyle() {
   return readJsonValue(STORAGE_KEYS.uiStyle, null);

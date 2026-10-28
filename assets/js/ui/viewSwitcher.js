@@ -1,9 +1,11 @@
 /**
- * viewSwitcher.js — таби розділів на вузьких екранах.
+ * viewSwitcher.js — section tabs on narrow screens.
  *
- * На широких екранах таби приховані стилями, а `.app-main` показує
- * обидві колонки. Тому модуль просто виставляє `data-active-view`
- * на контейнер — розкручування вже описано одним CSS-правилом.
+ * On wide screens, tabs are hidden by styles, and `.app-main` shows
+ * both columns. Therefore, this module simply sets `data-active-view`
+ * on the container — the expansion is already described by a single CSS rule.
+ *
+ *
  */
 
 import { APP_VIEWS, DEFAULT_APP_VIEW } from "../config.js";
@@ -18,10 +20,10 @@ export function initViewSwitcher() {
   const viewTabsElement = findById("viewTabs");
   const tabElements = [...viewTabsElement.querySelectorAll(".view-tabs__tab")];
 
-  /** Розділ, який показується зараз. */
+  /** Current section being displayed. */
   let activeViewName = readRememberedView();
 
-  /** Застосовує стан до контейнера й табів. */
+  /** Applies the state to the container and tabs. */
   function applyActiveView() {
     appMainElement.dataset.activeView = activeViewName;
 
@@ -30,10 +32,12 @@ export function initViewSwitcher() {
       tabElement.classList.toggle("is-active", isActive);
       tabElement.setAttribute("aria-selected", String(isActive));
     }
+
   }
 
   /**
    * @param {string} viewName
+   *
    */
   function activateView(viewName) {
     if (!VALID_VIEW_NAMES.includes(viewName)) return;

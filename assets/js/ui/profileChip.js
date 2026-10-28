@@ -1,14 +1,16 @@
 /**
- * profileChip.js — показує, хто зараз вів бюджет.
+ * profileChip.js — shows who is currently managing the budget.
  *
- * Ім'я приходить із сервера разом зі знімком: воно визначається
- * кодом доступу, яким користувач увійшов. Тому окремого поля «Хто»
- * у формі витрати немає — воно й не потрібне.
+ * The name comes from the server with the snapshot: it is determined
+ * by the access code the user logged in with. Therefore, there is no
+ * separate "Who" field in the expense form — it is not needed.
+ *
+ *
  */
 
 import { findById } from "./dom.js";
 
-/** Бере першу літеру для аватарки. */
+/** Gets the first letter for the avatar. */
 function toInitial(userName) {
   return userName ? userName.trim().charAt(0).toUpperCase() : "—";
 }
@@ -20,6 +22,7 @@ export function initProfileChip() {
 
   /**
    * @param {Readonly<object>} state
+   *
    */
   function render(state) {
     const { viewer } = state;

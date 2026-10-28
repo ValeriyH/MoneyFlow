@@ -1,51 +1,53 @@
 /**
- * crypto.js — хешування на клієнті.
+ * crypto.js — client-side hashing.
  *
- * Схема входу: пароль не залишає браузер у відкритому вигляді.
- *   passwordHash = SHA-256(пароль)
+ * Login scheme: the password never leaves the browser in plain text.
+ *   passwordHash = SHA-256(password)
  *   proof        = SHA-256(passwordHash + timestamp)
  *
- * Те саме стосується реєстрації: сервер приймає готовий
- * passwordHash, а не сам пароль. Тому відкритий пароль не
- * залишає браузер ні в одному запиті — ні при вході, ні при
- * створенні акаунта.
+ * The same applies to registration: the server accepts the ready
+ * passwordHash, not the password itself. Thus, the plain password
+ * never leaves the browser in any request — neither during login nor
+ * during account creation.
  *
- * У таблиці лежить те саме значення passwordHash. Відновити з
- * нього пароль можна лише перебором — і лише тим, хто має
- * доступ до таблиці.
+ * The same passwordHash value is stored in the table. Restoring the
+ * password from it is only possible via brute force — and only by those
+ * who have access to the table.
  *
- * Усі рядки кодуються в UTF-8 однаково на обох сторонах, інакше
- * хеші не збігалися б.
+ * All strings are encoded in UTF-8 on both sides, otherwise
+ * the hashes would not match.
+ *
+ *
  */
-
+ 
 /**
- * SHA-256 у вигляді шістнадцяткового рядка.
+ * SHA-256 as a hexadecimal string.
  * @param {string} value
  * @returns {Promise<string>}
  */
 export async function sha256Hex(value) {
   const encodedValue = new TextEncoder().encode(value);
   const digestBuffer = await crypto.subtle.digest("SHA-256", encodedValue);
-
+ 
   return [...new Uint8Array(digestBuffer)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
-
+ 
 /**
- * Готує доказ входу для сервера.
+ * Prepares the login proof for the server.
  *
- * @param {string} password — введений користувачем
- * @param {number} timestampMs — час клієнта, скоригований на зсув
+ * @param {string} password — entered by the user
+ * @param {number} timestampMs — client time, adjusted for skew
  * @returns {Promise<string>} proof
  */
 export async function buildLoginProof(password, timestampMs) {
   const passwordHash = await sha256Hex(password);
   return sha256Hex(passwordHash + String(timestampMs));
 }
-
+ 
 /**
- * Те, що зберігається в таблиці й іде на реєстрацію.
+ * What is stored in the table and used for registration.
  *
  * @param {string} password
  * @returns {Promise<string>}
@@ -53,9 +55,9 @@ export async function buildLoginProof(password, timestampMs) {
 export function hashPassword(password) {
   return sha256Hex(password);
 }
-
+ 
 /**
- * Чи доступне хешування на цій сторінні.
+ * Whether hashing is available on this page.
  * @returns {boolean}
  */
 export function isCryptoAvailable() {

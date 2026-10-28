@@ -1,7 +1,9 @@
 /**
- * toast.js — короткі спливаючі повідомлення.
- * Використовується для підтвердження дій, які не мають місця
- * на самій сторінці: синхронізація, видалення, помилки мережі.
+ * toast.js — short pop-up messages.
+ * Used to confirm actions that are not located
+ * on the page itself: synchronization, deletion, network errors.
+ *
+ *
  */
 
 import { createElement, findById } from "./dom.js";
@@ -17,6 +19,8 @@ function getToastHost() {
  * @param {string} message
  * @param {'success' | 'error' | 'warning' | 'neutral'} [tone]
  * @returns {void}
+ *
+ *
  */
 export function showToast(message, tone = "neutral") {
   const toastElement = createElement("div", {

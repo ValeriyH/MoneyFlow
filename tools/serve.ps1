@@ -1,21 +1,17 @@
 ﻿<#
 .SYNOPSIS
-    Локальний статичний сервер для MoneyFlow.
+    Local static server for MoneyFlow.
 
 .DESCRIPTION
-    ES-модулі не працюють при відкритті файлу через file:// - браузер
-    блокує їх з міркування безпеки. Цей скрипт піднімає звичайний
-    HTTP-сервер у корені проєкту, після чого сайт відкривається
-    за адресою http://localhost:5500.
+    ES modules don't work when opening a file via file:// - browsers block them for security reasons. This script starts a standard HTTP server at the project root, after which the site can be opened at http://localhost:5500.
 
-    УВАГА: файл зберігається з BOM. Windows PowerShell 5.1 інакше
-    прочитає кирилицю в OEM-кодуванні й зламає розбір команд.
+    CAUTION: This file is saved with BOM. Windows PowerShell 5.1 otherwise reads Cyrillic in OEM encoding and breaks command parsing.
 
 .PARAMETER Port
-    Порт для прослуховування. За замовчуванням 5500.
+    Port to listen on. Default is 5500.
 
 .PARAMETER NoBrowser
-    Не відкривати браузер після запуску.
+    Do not open the browser after starting.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/serve.ps1
@@ -30,10 +26,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
-# ── Файл середовища ─────────────────────────────────────────────────────────
-# Адреса бекенда не живе в git. Локально вона береться з
-# tools/local-endpoint.txt (теж у .gitignore) і підставляється у
-# згенерований assets/js/generated/env.js перед стартом сервера.
+# ── Env file ─────────────────────────────────────────────────────────
+# Backend address is not in git. Locally, it's taken from
+# tools/local-endpoint.txt (also in .gitignore) and is injected into
+# the generated assets/js/generated/env.js before the server starts.
 
 $localEndpointFile = Join-Path $PSScriptRoot 'local-endpoint.txt'
 $generatedEnvFile  = Join-Path $projectRoot 'assets\js\generated\env.js'
@@ -73,8 +69,8 @@ $contentTypes = @{
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$Port/")
 
-# Порт може бути зайнятий не закритим попереднім запуском.
-# Кажемо про це людською мовою замість стеку.
+# The port might be occupied by a previous run that wasn't closed properly.
+# We're reporting this in plain language instead of a stack trace.
 try {
     $listener.Start()
 }
@@ -89,9 +85,9 @@ catch {
 }
 
 try {
-    # Повідомлення лишаються в ASCII: кодова сторінка консолі
-    # (cp866, cp1251, cp1252) залежить від системи, і кирилиця
-    # перетворилася б на «кракозябри» у когось на комп'ютері.
+    # Messages remain in ASCII: the console's code page
+    # (cp866, cp1251, cp1252) depends on the system, and Cyrillic
+    # would turn into "krakozyabry" (garbage characters) on some computers.
     Write-Host ''
     Write-Host '  MoneyFlow - local server' -ForegroundColor Cyan
     Write-Host "  Root: $projectRoot" -ForegroundColor DarkGray
@@ -114,7 +110,7 @@ try {
 
         $filePath = Join-Path $projectRoot ($relativePath -replace '/', '\')
 
-        # Не даємо вийти за межі проєкту через ../ у шляху.
+        # Prevent path traversal via ../ in the URL.
         if (-not $filePath.StartsWith($projectRoot) -or -not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
             $response.StatusCode = 404
             $response.Close()
@@ -127,8 +123,8 @@ try {
         $fileBytes = [System.IO.File]::ReadAllBytes($filePath)
         $response.ContentType = $contentType
         $response.ContentLength64 = $fileBytes.Length
-        # Під час розробки браузер не має кешувати: інакше правка
-        # в CSS або JS не підхопиться до перезавантаження сторінки.
+        # During development, prevent the browser from caching: otherwise changes
+        # in CSS or JS won't be picked up on page reload.
         $response.Headers.Add('Cache-Control', 'no-store, must-revalidate')
         $response.OutputStream.Write($fileBytes, 0, $fileBytes.Length)
         $response.Close()
@@ -137,9 +133,9 @@ try {
     }
 }
 finally {
-    # Обгортка try/catch: якщо Start() не вдався, об'єкт уже
-    # звільнений, і Stop() кинув би ObjectDisposedException,
-    # замазавши справжню причину відмови.
+    # Try/catch wrapper: if Start() failed, the object is already
+    # disposed, and Stop() would throw an ObjectDisposedException,
+    # hiding the actual reason for failure.
     try { $listener.Stop() } catch { }
     try { $listener.Close() } catch { }
 }
