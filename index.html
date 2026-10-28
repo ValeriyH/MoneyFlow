@@ -17,10 +17,10 @@
   <link rel="stylesheet" href="assets/css/goals.css">
   <link rel="stylesheet" href="assets/css/solid.css">
 
-  <!-- Вигляд ставимо до першого малювання, інакше на темній темі
-       спалахує світлий екран. Ключ той самий, що й у localStore.
-       Разом ставимо theme-color: браузер бере колір панелей з
-       метатега, а не з CSS, тож без нього вони лишалися б білими. -->
+  <!-- The look is set before the first paint, otherwise the dark theme
+       flashes a light screen. The key is the same as in localStore.
+       theme-color is set together with it: the browser takes the bar colour
+       from the meta tag, not from CSS, so without it the bars would stay white. -->
   <script>
     (function () {
       try {
@@ -30,14 +30,14 @@
           document.querySelector('meta[name="theme-color"]').setAttribute("content", "#0d1014");
         }
       } catch (e) {
-        /* приватний режим або пошкоджене значення - лишаємо стандартний */
+        /* private mode or a damaged value — keep the default */
       }
     })();
   </script>
 </head>
 
 <body>
-  <!-- ── Екран входу: логін і пароль або реєстрація нового користувача ── -->
+  <!-- ── Login screen: login and password, or new user registration ──── -->
   <div class="gate" id="accessGate" hidden>
     <form class="gate__card" id="accessGateForm" autocomplete="on">
       <div class="gate__icon" aria-hidden="true">🔒</div>
@@ -110,7 +110,7 @@
     </form>
   </div>
 
-  <!-- ── Застосунок ─────────────────────────────────────────────────────── -->
+  <!-- ── Application ───────────────────────────────────────────────────── -->
   <div class="app" id="app" hidden>
 
     <header class="app-header">
@@ -133,10 +133,10 @@
         </button>
 
         <!--
-          Іконка користувача відкриває меню опцій. Роль menu з ARIA
-          тут не ставимо: стандарт вимагає керування стрілками й
-          окремої стрічки фокуса, а звичайні кнопки вже працюють
-          Tab-ом і Enter-ом. Роль була б брехнею — краще розкриття.
+          The user icon opens the options menu. The ARIA menu role is
+          not used: the standard requires arrow-key navigation and a
+          separate focus order, while plain buttons already work with
+          Tab and Enter. The role would be a lie — a disclosure is better.
         -->
         <div class="user-menu-host">
           <button class="profile-chip" id="profileChip" type="button"
@@ -155,7 +155,7 @@
 
     <main class="app-main" id="appMain" data-active-view="dashboard">
 
-      <!-- ── Ліва колонка: ввід операції ──────────────────────────────── -->
+      <!-- ── Left column: expense entry ──────────────────────────────── -->
       <section class="column column--entry">
         <form class="card entry-card" id="entryForm" data-form-state="compact" novalidate>
 
@@ -236,7 +236,7 @@
         </form>
       </section>
 
-      <!-- ── Права колонка: дані бюджету ──────────────────────────────── -->
+      <!-- ── Right column: budget data ────────────────────────────────── -->
       <section class="column column--insights">
 
         <nav class="view-tabs" id="viewTabs" role="tablist" aria-label="Розділи бюджету">
@@ -245,8 +245,8 @@
             <span aria-hidden="true">📊</span> Дашборд
           </button>
           <button class="view-tabs__tab" type="button" role="tab"
-                  data-view="transactions" aria-selected="false">
-            <span aria-hidden="true">🧾</span> Транзакції
+                  data-view="expenses" aria-selected="false">
+            <span aria-hidden="true">🧾</span> Витрати
           </button>
           <button class="view-tabs__tab" type="button" role="tab"
                   data-view="goals" aria-selected="false">
@@ -254,17 +254,17 @@
           </button>
         </nav>
 
-        <!-- Контейнер для вкладок "Цілі" -->
+        <!-- Container for the "Goals" tab -->
         <div id="goals-container" class="goals-container">
           <div id="goals-list" class="goals-list"></div>
         </div>
 
-        <!-- Модальне вікно коригування цілі (винесіно за межі #goals-container,
-             інакше приховується разом із контейнером на інших вкладках) -->
+        <!-- Goal change modal (kept outside #goals-container, otherwise
+             it is hidden together with the container on other tabs) -->
         <div class="modal-backdrop" id="goal-adjust-modal" hidden>
           <div class="modal-content modal-content--small">
             <header class="modal-header">
-              <h3>Коригувати ціль</h3>
+              <h3 id="goal-adjust-title">Коригувати ціль</h3>
               <button type="button" id="cancel-adjust-btn" class="btn-icon" aria-label="Скасувати">×</button>
             </header>
             
@@ -358,11 +358,11 @@
           </div>
         </article>
 
-        <article class="card card--collapsible" id="historyPanel" data-panel="transactions"
+        <article class="card card--collapsible" id="historyPanel" data-panel="expenses"
                  data-collapse-key="history" data-collapsed="false">
           <button class="card__header card__header--button" type="button"
                   aria-expanded="true" aria-controls="historyPanelBody">
-            <h2 class="card__title">Транзакції</h2>
+            <h2 class="card__title">Витрати</h2>
             <span class="card__header-side">
               <span class="card__badge card__badge--muted" id="historyCountBadge">—</span>
               <span class="card__collapse-icon" aria-hidden="true"></span>
@@ -371,8 +371,8 @@
 
           <div class="card__body" id="historyPanelBody">
             <div class="card__body-inner">
-              <ul class="transaction-list" id="transactionList"></ul>
-              <p class="card__empty" id="transactionListEmpty" hidden>За цей місяць ще немає операцій.</p>
+              <ul class="expense-list" id="expenseList"></ul>
+              <p class="card__empty" id="expenseListEmpty" hidden>За цей місяць ще немає витрат.</p>
             </div>
           </div>
         </article>
@@ -386,7 +386,7 @@
     </footer>
   </div>
 
-  <!-- ── Середовище не налаштовано ──────────────────────────────────────── -->
+  <!-- ── Environment not configured ─────────────────────────────────────── -->
   <div class="gate" id="unconfiguredGate" hidden>
     <div class="gate__card">
       <div class="gate__icon" aria-hidden="true">⚙️</div>
@@ -403,7 +403,7 @@
     </div>
   </div>
 
-  <!-- ── Сторінка відкрита не через HTTPS ────────────────────────────────── -->
+  <!-- ── Page opened without HTTPS ───────────────────────────────────────── -->
   <div class="gate" id="insecureContextGate" hidden>
     <div class="gate__card">
       <div class="gate__icon" aria-hidden="true">🔐</div>
@@ -421,14 +421,14 @@
     </div>
   </div>
 
-  <!-- ── Спливаючі повідомлення ─────────────────────────────────────────── -->
+  <!-- ── Toast notifications ─────────────────────────────────────────────── -->
   <div class="toast-host" id="toastHost" aria-live="polite" aria-atomic="false"></div>
 
   <!--
-    Файл середовища: адреса бекенда підставляється сюди під час
-    локального запуску або на GitHub Actions. Його немає в git,
-    тому підключається звичайним script, а не модулем: відсутність
-    файлу не має зупинити весь застосунок.
+    Environment file: the backend address is filled in during a
+    local run or on GitHub Actions. It is not in git, so it is
+    included as a plain script, not a module: a missing file
+    must not stop the whole application.
   -->
   <script src="assets/js/generated/env.js"></script>
   <script type="module" src="assets/js/main.js"></script>

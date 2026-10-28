@@ -8,9 +8,11 @@
  *
  */
  
-import { SYNC_STATE, isEnvironmentConfigured } from "./config.js";
-import { AUTH_FAILURE_CODES, openSession } from "./core/apiClient.js";
+import { isEnvironmentConfigured } from "./config.js";
+import { API_ERROR_CODE, AUTH_FAILURE_CODES, openSession } from "./core/apiClient.js";
 import { budgetStore } from "./core/budgetStore.js";
+import { goalStore } from "./core/goalStore.js";
+import { transactionQueue } from "./core/transactionQueue.js";
 import {
   currentServerAlignedTime,
   forgetSession,
@@ -32,7 +34,7 @@ import { initOverviewPanel } from "./ui/overviewPanel.js";
 import { initProfileChip } from "./ui/profileChip.js";
 import { initRegistrationPanel } from "./ui/registrationPanel.js";
 import { initSyncIndicator } from "./ui/syncIndicator.js";
-import { initTransactionList } from "./ui/transactionList.js";
+import { initExpenseList } from "./ui/expenseList.js";
 import { showToast } from "./ui/toast.js";
 import { initUserMenu } from "./ui/userMenu.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
@@ -59,15 +61,15 @@ const historyPanelElement = findById("historyPanel");
  
 const overviewPanel = initOverviewPanel();
 const budgetPanel = initBudgetPanel();
-const syncIndicator = initSyncIndicator({ store: budgetStore, onManualSync: requestSync });
-const transactionList = initTransactionList({
-  onDeleteRequest: confirmAndRemoveTransaction,
-  onEditRequest: (transaction) => entryForm.loadForEdit(transaction),
+const syncIndicator = initSyncIndicator({ onManualSync: requestSync });
+const expenseList = initExpenseList({
+  onDeleteRequest: confirmAndRemoveExpense,
+  onEditRequest: (expense) => entryForm.loadForEdit(expense),
 });
 const entryForm = initEntryForm({
   store: budgetStore,
-  onSubmit: submitTransactionEntry,
-  onUpdateSubmit: updateTransactionEntry,
+  onSubmit: submitExpenseEntry,
+  onUpdateSubmit: updateExpenseEntry,
 });
 const profileChip = initProfileChip();
  
@@ -112,7 +114,9 @@ const accessGate = initAccessGate({
 /* -- State subscriptions --------------------------------------------------------- */
  
 budgetStore.subscribe(renderApplicationState);
- 
+transactionQueue.subscribe(renderSyncIndicator);
+transactionQueue.onRejected(reportRejectedTransaction);
+
 /* -- Lifecycle --------------------------------------------------------- */
  
 // The open month must be passed to the store before the first synchronization:
@@ -133,7 +137,8 @@ if (!isEnvironmentConfigured()) {
   setVisibility(findById("insecureContextGate"), true);
 } else if (loadSession()) {
   budgetStore.hydrateFromCache();
-  budgetStore.setSession(loadSession());
+  goalStore.hydrateFromCache();
+  applySession(loadSession());
   revealApplication();
   requestSync();
 } else {
@@ -166,31 +171,87 @@ function registerOfflineShell() {
 }
  
 /* ── Synchronization ──────────────────────────────────────────────────────── */
- 
+
+/**
+ * Every store that talks to the server gets the same session. The queue
+ * goes first: the stores read the logged-in person's queue right away.
+ *
+ * @param {{ token: string, login: string } | null} session
+ * @returns {void}
+ */
+function applySession(session) {
+  transactionQueue.setSession(session);
+  budgetStore.setSession(session);
+  goalStore.setSession(session);
+}
+
+/**
+ * The one place that tells about refused transactions: a flush may be
+ * triggered by any action or by the background sync, and a refusal of
+ * a goal change made offline yesterday must not go unnoticed.
+ *
+ * @param {{ transaction: object, message: string }} rejection
+ * @returns {void}
+ */
+function reportRejectedTransaction({ transaction, message }) {
+  const subject = transaction.operation?.type === "goalChange" ? "Зміну цілі" : "Витрату";
+  showToast(`${subject} відхилено: ${message}`, "error");
+}
+
+/**
+ * Synchronization as a whole: send the queue, then refresh the budget.
+ *
+ * Each store answers only for itself; putting the steps in order is the
+ * dispatcher's job. A delivered queue already brings a snapshot, so the
+ * budget is reloaded only when nothing was sent.
+ *
+ * @returns {Promise<void>}
+ * @throws {Error} from the queue or the snapshot request
+ */
+async function synchronizeAll() {
+  const { delivered } = await transactionQueue.flush();
+  if (!delivered) await budgetStore.reload();
+}
+
 /** @returns {Promise<void>} */
 async function requestSync() {
-  const hasSucceeded = await budgetStore.synchronize();
- 
+  let failure = null;
+  try {
+    await synchronizeAll();
+  } catch (error) {
+    failure = error;
+  }
+
   // The server returns only requested months, so synchronization
   // closes only those that were in memory. The selected month might
   // be other (it's visible immediately after reload) — therefore we
   // request it separately. If it's already there, it's a redundant call.
   await budgetStore.loadPeriod(sessionState.activePeriodKey);
- 
-  if (!hasSucceeded) {
-    const { syncState, syncMessage, syncErrorCode } = budgetStore.getState();
- 
+
+  if (failure) {
+    const syncErrorCode = failure.code ?? null;
+    const syncMessage = failure.message;
+
     if (AUTH_FAILURE_CODES.includes(syncErrorCode)) {
       // Any authorization failure means one thing: we need to log in
       // again. The token is removed, otherwise the next opening would
       // again go to the same failed request.
       //
-      // The queue is not affected: it's managed by budgetStore:
-      // on SESSION_EXPIRED, records remain, on UNAUTHORIZED
-      // (account disabled, password changed, token forged) - they are deleted.
-      budgetStore.setSession(null);
+      // The queue is handled by transactionQueue: on SESSION_EXPIRED it
+      // stays and goes out after the next login, on UNAUTHORIZED (account
+      // disabled, password changed, token forged) it is cleared.
+      applySession(null);
       forgetSession();
-      
+
+      // UNAUTHORIZED means this token will never work again — typically
+      // the owner reset the password of a lost phone. Cached expenses and
+      // goals must not stay readable for whoever holds the phone; after
+      // a real login they are loaded again.
+      if (syncErrorCode === API_ERROR_CODE.unauthorized) {
+        budgetStore.reset();
+        goalStore.reset();
+      }
+
       // The app is hidden along with the gate: otherwise old ones
       // would remain under the form, which are no longer synchronized.
       setVisibility(appElement, false);
@@ -199,7 +260,7 @@ async function requestSync() {
       return;
     }
  
-    if (syncState === SYNC_STATE.offline) {
+    if (!navigator.onLine) {
       showToast("Немає мережі — нові записи чекають у черзі", "warning");
       return;
     }
@@ -230,25 +291,25 @@ async function unlockApplication({ login, password }) {
   saveClockOffset(response.serverTime - Date.now());
   saveSession(response.token, login);
  
-  budgetStore.setSession({ token: response.token, login });
- 
-  const hasSucceeded = await budgetStore.synchronize();
-  if (!hasSucceeded) {
-    budgetStore.setSession(null);
+  applySession({ token: response.token, login });
+
+  try {
+    await synchronizeAll();
+  } catch (error) {
+    applySession(null);
     forgetSession();
-    
+
     // Pass the error itself, not its text: the login screen must
     // distinguish "wrong password" from "too many attempts".
-    throw budgetStore.getState().lastSyncError
-      ?? new Error("Не вдалося підключитися до таблиці. Спробуйте пізніше.");
+    throw error;
   }
  
   revealApplication();
   showToast("Готово, бюджет підключено", "success");
 }
- 
+
 function handleUnlockFailure() {
-  budgetStore.setSession(null);
+  applySession(null);
   forgetSession();
 }
  
@@ -302,14 +363,30 @@ function renderApplicationState(state) {
   if (isPeriodReady) {
     overviewPanel.render(state, sessionState.activePeriodKey, referenceDate);
     budgetPanel.render(state, sessionState.activePeriodKey, referenceDate);
-    transactionList.render(state, sessionState.activePeriodKey);
+    expenseList.render(state, sessionState.activePeriodKey);
   }
  
-  syncIndicator.render(state);
+  renderSyncIndicator();
   profileChip.render(state);
   userMenu.setName(state.viewer.name);
- 
+
   updatePeriodNavigationAvailability(referenceDate);
+}
+
+/**
+ * The indicator combines budget loading and queue delivery; it is
+ * re-rendered on a change of either.
+ *
+ * @returns {void}
+ */
+function renderSyncIndicator() {
+  if (!sessionState.isAppVisible) return;
+
+  const { isLoading, loadError } = budgetStore.getState();
+  syncIndicator.render({
+    budget: { isLoading, loadError },
+    queue: transactionQueue.getStatus(),
+  });
 }
  
 /**
@@ -398,17 +475,18 @@ function describeQueuedEntries(count) {
  *
  */
 function confirmAndExit() {
-  const { pendingEntries } = budgetStore.getState();
- 
-  const message = pendingEntries.length > 0
-    ? `Вийти з системи? ${describeQueuedEntries(pendingEntries.length)}, ` +
+  const queuedCount = transactionQueue.getPending().length;
+
+  const message = queuedCount > 0
+    ? `Вийти з системи? ${describeQueuedEntries(queuedCount)}, ` +
       `коли ви знову увійдете.`
     : "Вийти з системи?";
- 
+
   if (!window.confirm(message)) return;
- 
+
   forgetSession();
   budgetStore.reset();
+  goalStore.reset();
   window.location.reload();
 }
  
@@ -450,7 +528,7 @@ function moveActivePeriodBy(offsetInMonths) {
  
 function initLifecycleListeners() {
   window.addEventListener("online", () => {
-    if (budgetStore.getState().pendingEntries.length > 0) requestSync();
+    if (transactionQueue.getPending().length > 0) requestSync();
   });
  
   window.addEventListener("offline", () => {
@@ -469,46 +547,48 @@ function initLifecycleListeners() {
 /* ── User Actions ─────────────────────────────────────────────────────── */
  
 /**
- * @param {object} transactionDraft
+ * @param {object} expenseDraft
  * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
  *
  *
  */
-async function submitTransactionEntry(transactionDraft) {
-  const transactionToSave = {
-    ...transactionDraft,
+async function submitExpenseEntry(expenseDraft) {
+  const expenseToSave = {
+    ...expenseDraft,
     id: crypto.randomUUID(),
     recordedAt: new Date().toISOString(),
   };
  
-  const { deliveredImmediately, error } = await budgetStore.addTransaction(transactionToSave);
+  const { deliveredImmediately, error } = await budgetStore.addExpense(expenseToSave);
  
   if (deliveredImmediately) {
-    showToast(`Збережено: ${transactionDraft.category}`, "success");
+    showToast(`Збережено: ${expenseDraft.category}`, "success");
   }
  
   return { deliveredImmediately, error };
 }
  
 /**
- * @param {object} transaction
+ * @param {object} expense
  * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
  *
  *
  */
-async function confirmAndRemoveTransaction(transaction) {
+async function confirmAndRemoveExpense(expense) {
   const shouldRemove = window.confirm(
-    `Видалити операцію «${transaction.category}» на ${transaction.occurredOn}?`,
+    `Видалити витрату «${expense.category}» на ${expense.occurredOn}?`,
   );
   if (!shouldRemove) return;
  
-  const { deliveredImmediately, error } = await budgetStore.removeTransaction(transaction);
- 
+  const { deliveredImmediately, rejected, error } = await budgetStore.removeExpense(expense);
+
   if (deliveredImmediately) {
-    showToast("Операцію видалено", "success");
+    showToast("Витрату видалено", "success");
     return;
   }
- 
+
+  // A refusal has already been shown by reportRejectedTransaction.
+  if (rejected) return;
   showToast(error?.message ?? "Видалення в черзі — повторимо за мережі", "warning");
 }
  
@@ -518,20 +598,21 @@ async function confirmAndRemoveTransaction(transaction) {
  * `changes` does not contain `id` and `user`: the first server finds
  * by the row number, and "Who" it is taken from its own token.
  *
- * @param {string} transactionId
+ * @param {string} expenseId
  * @param {{ amount: number, category: string, occurredOn: string, note: string }} changes
  * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
  *
  *
  */
-async function updateTransactionEntry(transactionId, changes) {
-  const { deliveredImmediately, error } = await budgetStore.updateTransaction(transactionId, changes);
- 
+async function updateExpenseEntry(expenseId, changes) {
+  const { deliveredImmediately, rejected, error } = await budgetStore.updateExpense(expenseId, changes);
+
   if (deliveredImmediately) {
     showToast("Зміни збережено", "success");
     return { deliveredImmediately, error };
   }
- 
-  showToast(error?.message ?? "Правка в черзі — повторимо за мережі", "warning");
+
+  // A refusal has already been shown by reportRejectedTransaction.
+  if (!rejected) showToast(error?.message ?? "Правка в черзі — повторимо за мережі", "warning");
   return { deliveredImmediately, error };
 }

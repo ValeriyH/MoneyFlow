@@ -16,28 +16,28 @@ import {
  
 /**
  * Filters operations belonging to the given month.
- * @param {Array<object>} transactions
+ * @param {Array<object>} expenses
  * @param {string} periodKey — "2026-10"
  * @returns {Array<object>}
  *
  *
  */
-export function filterTransactionsByPeriod(transactions, periodKey) {
-  return transactions.filter(
-    (transaction) => typeof transaction.occurredOn === "string" &&
-      transaction.occurredOn.startsWith(periodKey),
+export function filterExpensesByPeriod(expenses, periodKey) {
+  return expenses.filter(
+    (expense) => typeof expense.occurredOn === "string" &&
+      expense.occurredOn.startsWith(periodKey),
   );
 }
  
 /**
  * Sum of operations.
- * @param {Array<object>} transactions
+ * @param {Array<object>} expenses
  * @returns {number}
  *
  *
  */
-function totalAmount(transactions) {
-  return transactions.reduce((runningTotal, transaction) => runningTotal + transaction.amount, 0);
+function totalAmount(expenses) {
+  return expenses.reduce((runningTotal, expense) => runningTotal + expense.amount, 0);
 }
  
 /**
@@ -59,7 +59,7 @@ export function totalBudgetForPeriod(categories) {
 /**
  * Full report for the month: balance, spending structure, projection, dynamics.
  *
- * @param {Array<object>} allTransactions — all budget operations
+ * @param {Array<object>} allExpenses — all budget operations
  * @param {Array<object>} categories — catalog for icons, colors, and limits
  * @param {string} periodKey
  * @param {Date} [referenceDate]
@@ -68,7 +68,7 @@ export function totalBudgetForPeriod(categories) {
  *   expenseTotal: number,
  *   budgetTotal: number,
  *   balance: number,
- *   transactionCount: number,
+ *   expenseCount: number,
  *   dailyAverageExpense: number,
  *   projectedExpenseTotal: number,
  *   previousPeriodExpenseTotal: number,
@@ -77,15 +77,15 @@ export function totalBudgetForPeriod(categories) {
  *
  *
  */
-export function buildPeriodSummary(allTransactions, categories, periodKey, referenceDate = new Date()) {
-  const periodTransactions = filterTransactionsByPeriod(allTransactions, periodKey);
+export function buildPeriodSummary(allExpenses, categories, periodKey, referenceDate = new Date()) {
+  const periodExpenses = filterExpensesByPeriod(allExpenses, periodKey);
  
-  const expenseTotal = totalAmount(periodTransactions);
+  const expenseTotal = totalAmount(periodExpenses);
   const budgetTotal = totalBudgetForPeriod(categories);
  
   const elapsedDays = Math.max(elapsedDaysInPeriod(periodKey, referenceDate), 1);
   const previousPeriodTotal = totalAmount(
-    filterTransactionsByPeriod(allTransactions, shiftPeriodKey(periodKey, -1)),
+    filterExpensesByPeriod(allExpenses, shiftPeriodKey(periodKey, -1)),
   );
  
   return {
@@ -93,14 +93,14 @@ export function buildPeriodSummary(allTransactions, categories, periodKey, refer
     expenseTotal,
     budgetTotal,
     balance: budgetTotal - expenseTotal,
-    transactionCount: periodTransactions.length,
+    expenseCount: periodExpenses.length,
     dailyAverageExpense: expenseTotal / elapsedDays,
     projectedExpenseTotal: isCurrentPeriod(periodKey, referenceDate)
       ? (expenseTotal / elapsedDays) * daysInPeriod(periodKey)
       : expenseTotal,
     previousPeriodExpenseTotal: previousPeriodTotal,
     remainingDays: remainingDaysInPeriod(periodKey, referenceDate),
-    categoryBreakdown: buildCategoryBreakdown(periodTransactions, categories, expenseTotal),
+    categoryBreakdown: buildCategoryBreakdown(periodExpenses, categories, expenseTotal),
   };
 }
  
@@ -111,23 +111,23 @@ export function buildPeriodSummary(allTransactions, categories, periodKey, refer
  * it's shown as a neutral dot. Thus old records remain
  * readable, even if the category was removed from the table.
  *
- * @param {Array<object>} expenseTransactions
+ * @param {Array<object>} periodExpenses
  * * @param {Array<object>} categories
  * * @param {number} expenseTotal — for share calculation
  * * @returns {Array<{ name: string, icon: string, color: string, total: number, share: number }>}
  * *
  *
  */
-export function buildCategoryBreakdown(expenseTransactions, categories, expenseTotal) {
+export function buildCategoryBreakdown(periodExpenses, categories, expenseTotal) {
   const categoryMetaByName = new Map(
     categories.map((category) => [category.name, category]),
   );
  
   const totalByCategoryName = new Map();
-  for (const transaction of expenseTransactions) {
+  for (const expense of periodExpenses) {
     totalByCategoryName.set(
-      transaction.category,
-      (totalByCategoryName.get(transaction.category) ?? 0) + transaction.amount,
+      expense.category,
+      (totalByCategoryName.get(expense.category) ?? 0) + expense.amount,
     );
   }
  
@@ -158,14 +158,14 @@ export function buildCategoryBreakdown(expenseTransactions, categories, expenseT
  * submitted within one minute, and gives order for old records without
  * time, where the date is exactly the same.
  *
- * @param {Array<object>} transactions
+ * @param {Array<object>} expenses
  * @param {number} pageSize
  * @returns {Array<object>}
  *
  *
  */
-export function takeRecentTransactions(transactions, pageSize) {
-  return [...transactions]
+export function takeRecentExpenses(expenses, pageSize) {
+  return [...expenses]
     .sort(
       (left, right) =>
         expenseTimeKey(right).localeCompare(expenseTimeKey(left)) ||
@@ -186,13 +186,13 @@ export function takeRecentTransactions(transactions, pageSize) {
  * `T00:00`: a record without date must end up at the end, not
  * at the beginning.
  *
- * @param {object} transaction
+ * @param {object} expense
  * @returns {string}
  *
  *
  */
-function expenseTimeKey(transaction) {
-  const occurredOn = transaction?.occurredOn ?? "";
+function expenseTimeKey(expense) {
+  const occurredOn = expense?.occurredOn ?? "";
   if (!occurredOn) return "";
   return occurredOn.includes("T") ? occurredOn : `${occurredOn}T00:00`;
 }

@@ -1,31 +1,44 @@
 /**
  * goals.js — "Goals" tab.
  *
- * Shows a list of active goals with a progress bar and a monthly requirement.
- * Goals are loaded along with the budget snapshot via budgetStore
- * (fetchBudgetSnapshot → fetchGoals on the server).
- * The only client-side action — adjusting the current amount via a modal window.
+ * Shows active goals with a progress bar, the monthly requirement and the
+ * change history. A user adds a change through the modal window and can
+ * edit or delete any history row. Every action goes to the transaction
+ * queue first, so it works offline and appears in the history immediately.
  *
  *
  */
 
-import { budgetStore } from "../core/budgetStore.js";
-import { formatCurrency } from "../domain/formatters.js";
-import { currentPeriodKey } from "../domain/period.js";
+import { goalStore } from "../core/goalStore.js";
+import { formatCurrency, parseIsoDate } from "../domain/formatters.js";
 import { showToast } from "./toast.js";
 
 const TAB_ID = "goals";
 const MAX_ADJUST_AMOUNT = 999999;
 
-let isAdjusting = false;
-
 const goalsContainer = document.getElementById("goals-container");
 const adjustModal = document.getElementById("goal-adjust-modal");
+const adjustTitle = document.getElementById("goal-adjust-title");
+
+// History is collapsed by default; re-rendering must not close what the user opened.
+const expandedHistoryGoalIds = new Set();
 
 /**
- * Displays the "Goals" tab.
+ * What the open modal changes: a new change for a goal, or an existing row.
+ * @type {{ mode: "add", goalId: string } | { mode: "edit", changeId: string } | null}
+ */
+let modalTarget = null;
+
+const historyDateFormatter = new Intl.DateTimeFormat("uk-UA", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/**
+ * Displays the "Goals" tab: cached goals first, then the synchronized ones.
  *
- *
+ * @returns {Promise<void>}
  */
 export async function showGoalsTab() {
   document.body.dataset.tab = TAB_ID;
@@ -34,29 +47,35 @@ export async function showGoalsTab() {
 
   // Cached goals are shown right away: the network may be slow or absent,
   // and a failed load must not leave the tab empty.
-  renderGoalsList(goalsContainer, budgetStore.getState().goals);
+  renderGoals();
 
-  // Load the month — goals come with the budget snapshot
   try {
-    await budgetStore.loadPeriod(currentPeriodKey());
+    await goalStore.synchronize();
   } catch (error) {
     console.warn("[MoneyFlow] Goals were not refreshed:", error);
-    return;
   }
-
-  renderGoalsList(goalsContainer, budgetStore.getState().goals);
 }
 
 /**
- * Save adjustment: sign = 1 for addition, -1 for subtraction.
+ * Refusals are not reported here: the dispatcher shows them for the
+ * whole queue, whichever action triggered the flush.
  *
+ * @param {{ delivered: boolean, error: Error | null }} result
+ * @returns {void}
+ */
+function reportDelivery({ delivered, error }) {
+  if (!delivered && error) {
+    showToast("Зміна в черзі — надішлемо, коли з'явиться мережа", "warning");
+  }
+}
+
+/**
+ * Save from the modal: sign = 1 for addition, -1 for subtraction.
  *
+ * @param {1 | -1} sign
+ * @returns {Promise<void>}
  */
 async function saveAdjust(sign) {
-  // The buttons stay clickable while the request is in flight, so a
-  // double tap on a slow connection would apply the adjustment twice.
-  if (isAdjusting) return;
-
   const amountInput = document.getElementById("adjust-input");
   const amount = parseAmount(amountInput.value);
   if (amount === null) {
@@ -64,22 +83,30 @@ async function saveAdjust(sign) {
     return;
   }
 
-  const goalId = amountInput.dataset.goalId;
-  const goal = budgetStore.getState().goals.find((g) => String(g.id) === goalId);
-  if (!goal) return;
+  // The modal closes before the network: a double tap finds no target
+  // and cannot queue the same change twice.
+  const target = modalTarget;
+  if (!target) return;
+  closeAdjustModal();
 
-  setAdjusting(true);
-  try {
-    const result = await budgetStore.adjustGoal({ id: goal.id, amount: sign * amount });
-    if (!result.success && result.error) {
-      showToast("Помилка коригування: " + result.error.message, "error");
-      return;
-    }
-    renderGoalsList(goalsContainer, budgetStore.getState().goals);
-    closeAdjustModal();
-  } finally {
-    setAdjusting(false);
-  }
+  const result = target.mode === "edit"
+    ? await goalStore.updateChange(target.changeId, sign * amount)
+    : await goalStore.addChange(target.goalId, sign * amount);
+
+  reportDelivery(result);
+}
+
+/**
+ * @param {object} change
+ * @returns {Promise<void>}
+ */
+async function confirmAndDeleteChange(change) {
+  const shouldDelete = window.confirm(
+    `Видалити запис ${formatSignedAmount(change.amount)} від ${formatHistoryDate(change.occurredOn)}?`,
+  );
+  if (!shouldDelete) return;
+
+  reportDelivery(await goalStore.deleteChange(change.id));
 }
 
 /**
@@ -97,12 +124,36 @@ function parseAmount(rawValue) {
   return amount > 0 && amount <= MAX_ADJUST_AMOUNT ? amount : null;
 }
 
-function setAdjusting(value) {
-  isAdjusting = value;
-  for (const id of ["adjust-add-btn", "adjust-subtract-btn"]) {
-    const button = document.getElementById(id);
-    if (button) button.disabled = value;
-  }
+/**
+ * @param {number} amount
+ * @returns {string} «+500 грн» or «−500 грн»
+ */
+function formatSignedAmount(amount) {
+  const sign = amount < 0 ? "−" : "+";
+  return sign + formatCurrency(Math.abs(amount)).replace("₴", "грн");
+}
+
+/**
+ * @param {string} occurredOn — "2026-10-17"
+ * @returns {string}
+ */
+function formatHistoryDate(occurredOn) {
+  const parsedDate = parseIsoDate(occurredOn);
+  return parsedDate ? historyDateFormatter.format(parsedDate) : String(occurredOn ?? "");
+}
+
+/**
+ * @param {string} changeId
+ * @returns {object | undefined} history row as currently shown
+ */
+function findChange(changeId) {
+  return goalStore.getGoals()
+    .flatMap((goal) => goal.history ?? [])
+    .find((change) => change.id === changeId);
+}
+
+function renderGoals() {
+  if (goalsContainer) renderGoalsList(goalsContainer, goalStore.getGoals());
 }
 
 function renderGoalsList(container, goals) {
@@ -127,6 +178,11 @@ function renderGoalsList(container, goals) {
           до ${escapeHtml(String(goal.deadline))}`
       : `<strong>Дедлайн не вказано</strong>`;
 
+    // Numbers are recalculated on the server, so they lag behind queued changes.
+    const pendingHtml = goal.hasPendingChanges
+      ? `<span class="goal-pending">Оновиться після синхронізації</span>`
+      : "";
+
     return `
       <div class="goal-card" data-goal-id="${goalId}">
         <div class="goal-header">
@@ -142,11 +198,14 @@ function renderGoalsList(container, goals) {
 
         <div class="progress-text">
           <span class="progress-percent">Виконано ${progress}%</span>
+          ${pendingHtml}
         </div>
 
         <div class="monthly-requirement">
           ${requirementHtml}
         </div>
+
+        ${renderHistory(goal)}
 
         <div class="goal-actions">
           <button class="adjust-btn btn-tertiary">Коригувати</button>
@@ -156,39 +215,98 @@ function renderGoalsList(container, goals) {
   }).join("");
 }
 
-function openAdjustModal(goal) {
+/**
+ * @param {object} goal
+ * @returns {string} HTML of the collapsible history block
+ */
+function renderHistory(goal) {
+  const history = goal.history ?? [];
+  const isOpen = expandedHistoryGoalIds.has(String(goal.id));
+
+  const itemsHtml = history.length === 0
+    ? `<li class="goal-history__empty">Змін ще не було</li>`
+    : history.map((change) => `
+        <li class="goal-history__item${change.pending ? " is-pending" : ""}" data-change-id="${escapeHtml(String(change.id))}">
+          <span class="goal-history__date">${escapeHtml(formatHistoryDate(change.occurredOn))}</span>
+          <span class="goal-history__amount${change.amount < 0 ? " is-negative" : ""}">${escapeHtml(formatSignedAmount(change.amount))}</span>
+          <span class="goal-history__user">${change.pending ? "очікує синхронізації" : escapeHtml(change.user)}</span>
+          <span class="goal-history__actions">
+            <button type="button" class="icon-action goal-history__edit" aria-label="Змінити запис">✎</button>
+            <button type="button" class="icon-action icon-action--danger goal-history__delete" aria-label="Видалити запис">🗑</button>
+          </span>
+        </li>
+      `).join("");
+
+  return `
+    <details class="goal-history" data-goal-id="${escapeHtml(String(goal.id))}"${isOpen ? " open" : ""}>
+      <summary>Історія (${history.length})</summary>
+      <ul class="goal-history__list">${itemsHtml}</ul>
+    </details>
+  `;
+}
+
+/**
+ * @param {{ mode: "add", goalId: string } | { mode: "edit", changeId: string }} target
+ * @param {number} [initialAmount] — prefilled for edit
+ * @returns {void}
+ */
+function openAdjustModal(target, initialAmount) {
   if (!adjustModal) return;
+  modalTarget = target;
+
+  if (adjustTitle) {
+    adjustTitle.textContent = target.mode === "edit" ? "Змінити запис" : "Коригувати ціль";
+  }
+
   const adjustInput = document.getElementById("adjust-input");
   if (adjustInput) {
-    adjustInput.value = "";
-    adjustInput.dataset.goalId = goal.id;
+    adjustInput.value = initialAmount ? String(initialAmount) : "";
   }
-  // Use setAttribute for easier state management
+
   adjustModal.removeAttribute("hidden");
   adjustModal.classList.add("show");
 }
 
 function closeAdjustModal() {
+  modalTarget = null;
   if (!adjustModal) return;
   adjustModal.classList.remove("show");
   adjustModal.setAttribute("hidden", "");
 }
 
-/**
- * Event on the dynamically created "Adjust" button (delegation through the container).
- *
- *
- */
+goalStore.subscribe(renderGoals);
+
 if (goalsContainer) {
+  // Event delegation: cards are re-rendered on every store change.
   goalsContainer.addEventListener("click", (e) => {
     const adjustBtn = e.target.closest(".adjust-btn");
-    if (!adjustBtn) return;
+    if (adjustBtn) {
+      const goalId = adjustBtn.closest(".goal-card")?.dataset.goalId;
+      if (goalId) openAdjustModal({ mode: "add", goalId });
+      return;
+    }
 
-    const goalCard = adjustBtn.closest(".goal-card");
-    const goalId = goalCard?.dataset.goalId;
-    const goal = budgetStore.getState().goals.find((g) => String(g.id) === goalId);
-    if (goal) openAdjustModal(goal);
+    const historyButton = e.target.closest(".goal-history__edit, .goal-history__delete");
+    if (!historyButton) return;
+
+    const change = findChange(historyButton.closest(".goal-history__item")?.dataset.changeId);
+    if (!change) return;
+
+    if (historyButton.classList.contains("goal-history__edit")) {
+      openAdjustModal({ mode: "edit", changeId: change.id }, Math.abs(change.amount));
+    } else {
+      confirmAndDeleteChange(change);
+    }
   });
+
+  // toggle does not bubble, so it is caught on the way down.
+  goalsContainer.addEventListener("toggle", (e) => {
+    const details = e.target;
+    if (!details.classList?.contains("goal-history")) return;
+
+    if (details.open) expandedHistoryGoalIds.add(details.dataset.goalId);
+    else expandedHistoryGoalIds.delete(details.dataset.goalId);
+  }, true);
 }
 
 // "Add" button in the adjustment modal

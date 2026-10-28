@@ -61,11 +61,11 @@ function parseTimeFromOccurred(occurredOn) {
  * @param {import('../core/budgetStore.js').budgetStore} dependencies.store
  * @param {(draft: object) => Promise<void>} dependencies.onSubmit
  * @param {(draft: object) => Promise<void>} dependencies.onUpdateSubmit
- * @param {(transaction: object) => void} dependencies.onEditRequest
+ * @param {(expense: object) => void} dependencies.onEditRequest
  * @param {() => void} [dependencies.onEditCancel]
  * @returns {{
  *   render: (state: Readonly<object>) => void,
- *   loadForEdit: (transaction: object) => void,
+ *   loadForEdit: (expense: object) => void,
  *   cancelEdit: () => void,
  * }}
  *
@@ -103,8 +103,8 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   /** State of the form, which is not stored in DOM attributes. */
   const formState = {
     selectedCategoryName: null,
-    /** id of the transaction being edited; null — it's a new record. */
-    editingTransactionId: null,
+    /** id of the expense being edited; null — it's a new record. */
+    editingExpenseId: null,
     /**
      * Show inactive categories.
      *
@@ -187,22 +187,22 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
    * change something, so hiding fields immediately would be
    * inconvenient.
    *
-   * @param {object} transaction
+   * @param {object} expense
    *
    */
-  function loadForEdit(transaction) {
-    formState.editingTransactionId = transaction.id;
-    formState.selectedCategoryName = transaction.category;
+  function loadForEdit(expense) {
+    formState.editingExpenseId = expense.id;
+    formState.selectedCategoryName = expense.category;
 
-    amountInputElement.value = String(transaction.amount ?? "");
-    const occurredOn = transaction.occurredOn ?? toLocalIso(new Date()).slice(0, 10);
+    amountInputElement.value = String(expense.amount ?? "");
+    const occurredOn = expense.occurredOn ?? toLocalIso(new Date()).slice(0, 10);
 
     dateInputElement.value = occurredOn.split('T')[0] ?? occurredOn;
     timeInputElement.value = parseTimeFromOccurred(occurredOn) || toLocalIso(new Date()).slice(11, 16); // If no time — set current
-    noteInputElement.value = transaction.note ?? "";
+    noteInputElement.value = expense.note ?? "";
 
     submitButtonElement.textContent = "Зберегти зміни";
-    editingTextElement.textContent = `${transaction.category} · ${formatCurrency(transaction.amount)}`;
+    editingTextElement.textContent = `${expense.category} · ${formatCurrency(expense.amount)}`;
     setVisibility(editingBannerElement, true);
 
     renderCategoryChips(store.getState().categories);
@@ -225,7 +225,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
   }
 
   function cancelEdit() {
-    formState.editingTransactionId = null;
+    formState.editingExpenseId = null;
     formState.selectedCategoryName = null;
 
     submitButtonElement.textContent = "Зберегти витрату";
@@ -237,7 +237,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   /** Whether the form is currently editing an existing record, not creating a new one. */
   function isEditing() {
-    return formState.editingTransactionId !== null;
+    return formState.editingExpenseId !== null;
   }
 
   /* ── Compact mode ─────────────────────────────────────────────────────────── */
@@ -637,16 +637,16 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
   /** @param {object} draft */
   function submitEdit(draft) {
-    const transactionId = formState.editingTransactionId;
+    const expenseId = formState.editingExpenseId;
 
-    formState.editingTransactionId = null;
+    formState.editingExpenseId = null;
     formState.selectedCategoryName = null;
     submitButtonElement.textContent = "Зберегти витрату";
     setVisibility(editingBannerElement, false);
     resetFormFields();
     onEditRequest?.();
 
-    onUpdateSubmit(transactionId, draft).then(({ deliveredImmediately, error }) => {
+    onUpdateSubmit(expenseId, draft).then(({ deliveredImmediately, error }) => {
       renderRecentEntries();
       if (deliveredImmediately) return;
 
@@ -757,17 +757,17 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
    * so a match by sum, category, and date is sufficient.
    *
    * @param {object} entry
-   * @param {ReadonlyArray<object>} transactions
+   * @param {ReadonlyArray<object>} expenses
    * @returns {boolean}
    *
    */
-  function isStillPending(entry, transactions) {
-    return transactions.some(
-      (transaction) =>
-        transaction.pending === true &&
-        transaction.amount === entry.amount &&
-        transaction.category === entry.category &&
-        transaction.occurredOn === entry.occurredOn,
+  function isStillPending(entry, expenses) {
+    return expenses.some(
+      (expense) =>
+        expense.pending === true &&
+        expense.amount === entry.amount &&
+        expense.category === entry.category &&
+        expense.occurredOn === entry.occurredOn,
     );
   }
 
@@ -776,11 +776,11 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
     const now = Date.now();
 
     recentEntries = recentEntries.filter(
-      (entry) => isStillPending(entry, state.transactions) ||
+      (entry) => isStillPending(entry, state.expenses) ||
         now - entry.savedAtMs < RECENT_ENTRY_MIN_VISIBLE_MS,
     );
 
-    scheduleRecentEntriesRefresh(state.transactions);
+    scheduleRecentEntriesRefresh(state.expenses);
 
     if (recentEntries.length === 0) {
       clearChildren(recentEntriesElement);
@@ -792,7 +792,7 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
 
     for (const entry of recentEntries) {
       const category = state.categories.find((item) => item.name === entry.category);
-      const isPending = isStillPending(entry, state.transactions);
+      const isPending = isStillPending(entry, state.expenses);
 
       const itemElement = createElement("li", {
         className: "recent-entry",
@@ -834,17 +834,17 @@ export function initEntryForm({ store, onSubmit, onUpdateSubmit, onEditRequest, 
    * for synchronized records, for which fifteen seconds — is a hard
    * limit.
    *
-   * @param {ReadonlyArray<object>} transactions
+   * @param {ReadonlyArray<object>} expenses
    *
    */
-  function scheduleRecentEntriesRefresh(transactions) {
+  function scheduleRecentEntriesRefresh(expenses) {
     if (recentEntriesTimer !== null) {
       clearTimeout(recentEntriesTimer);
       recentEntriesTimer = null;
     }
 
     const expiryTimes = recentEntries
-      .filter((entry) => !isStillPending(entry, transactions))
+      .filter((entry) => !isStillPending(entry, expenses))
       .map((entry) => entry.savedAtMs + RECENT_ENTRY_MIN_VISIBLE_MS);
 
     if (expiryTimes.length === 0) return;

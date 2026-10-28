@@ -22,7 +22,7 @@ export function initBudgetPanel() {
   function render(state, periodKey, referenceDate) {
     const budgetReport = buildBudgetReport(
       state.categories,
-      state.transactions,
+      state.expenses,
       periodKey,
       referenceDate,
     );
@@ -94,8 +94,8 @@ export function initBudgetPanel() {
   }
 
   /**
-   * Ширина смужки залишається в межах 100%, інакше перевищення
-   * «з'їдає» сосідні елементи.
+   * The bar width stays within 100%, otherwise an overrun
+   * «eats» the neighbouring elements.
    *
    * @param {number} usageRatio
    * @returns {number}

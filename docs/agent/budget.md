@@ -9,7 +9,7 @@
 ## Calculations
 - **Monthly Budget** = Sum of all `Ліміт` for the current month in `BudgetLimits`.
 - **Daily Limit** = `Monthly Budget` / days in the month.
-- **Balance** = `Monthly Budget` - `Total Expenses` (sum of `Сума` for `Transactions` in that month).
+- **Balance** = `Monthly Budget` - `Total Expenses` (sum of `Сума` in the `Expenses` sheet for that month).
 - **Progress** = `Total Expenses` / `Monthly Budget`.
  
 ## Date Handling

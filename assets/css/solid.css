@@ -233,30 +233,30 @@ code {
   background: var(--color-accent-soft);
 }
 
-/* ── Transaction list ──────────────────────────────────────────────────────── */
+/* ── Expense list ──────────────────────────────────────────────────────── */
 
-.transaction {
+.expense {
   border-bottom-color: var(--color-border);
 }
 
-.transaction:last-child {
+.expense:last-child {
   border-bottom: none;
 }
 
-.transaction__icon {
+.expense__icon {
   background: var(--color-surface-muted);
   border: 1px solid var(--color-border);
 }
 
-.transaction:hover {
+.expense:hover {
   background: var(--color-surface-muted);
 }
 
-.transaction__action {
+.icon-action {
   color: var(--color-text-tertiary);
 }
 
-.transaction__action:hover:not(:disabled) {
+.icon-action:hover:not(:disabled) {
   background: var(--color-surface-muted);
   color: var(--color-text-primary);
 }
