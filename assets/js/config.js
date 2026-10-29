@@ -35,6 +35,7 @@ export const STORAGE_KEYS = {
   activeView: "moneyflow.active-view",
   collapsedCards: "moneyflow.collapsed-cards",
   cachedSnapshot: "moneyflow.cached-snapshot",
+  cachedGoals: "moneyflow.cached-goals",
   uiStyle: "moneyflow.ui-style",
 };
 
@@ -51,14 +52,14 @@ export const UI_STYLE_CLASSIC = "classic";
 export const UI_STYLE_SOLID = "solid";
 
 /**
- * Start of the queue key. Suffix is the login:
- * `moneyflow.pending-entries.оля`.
+ * Start of the transaction queue key. Suffix is the login:
+ * `moneyflow.transaction-queue.оля`.
  *
  * The queue belongs to a specific person. One browser can be used by
  * family members: if the queue were shared, entries from one
  * would be sent on behalf of another — the server takes the user from the token.
  *  */
-export const PENDING_ENTRIES_KEY_PREFIX = "moneyflow.pending-entries.";
+export const TRANSACTION_QUEUE_KEY_PREFIX = "moneyflow.transaction-queue.";
 
 /** Synchronization states between the browser and the Google Sheet. */
 export const SYNC_STATE = {
@@ -93,7 +94,7 @@ export const REQUEST_TIMEOUT_MS = 30000;
  *  */
 export const MIN_PASSWORD_LENGTH = 10;
 
-/** Number of transactions to show in the "Latest transactions" list. */
+/** Number of expenses to show in the "Latest expenses" list. */
 export const HISTORY_PAGE_SIZE = 25;
 
 /** Threshold above which a limit is considered "almost exhausted", fraction of 1. */
@@ -108,7 +109,7 @@ export const BUDGET_WARNING_THRESHOLD = 0.8;
  *  */
 export const APP_VIEWS = {
   dashboard: "dashboard",
-  transactions: "transactions",
+  expenses: "expenses",
   goals: "goals",
 };
 

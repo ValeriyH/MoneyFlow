@@ -126,6 +126,67 @@
   color: var(--color-text-primary);
 }
 
+.goal-pending {
+  font-family: var(--font-body, inherit);
+  color: var(--color-warning);
+}
+
+/* ── History ───────────────────────────────────────────────────────────────────── */
+
+.goal-history summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.goal-history__list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.goal-history__item,
+.goal-history__empty {
+  font-size: 13px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.goal-history__empty {
+  color: var(--color-text-tertiary);
+}
+
+.goal-history__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "date amount actions"
+    "user user actions";
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.goal-history__date { grid-area: date; color: var(--color-text-secondary); }
+.goal-history__user { grid-area: user; color: var(--color-text-tertiary); min-width: 0; overflow-wrap: anywhere; }
+.goal-history__actions { grid-area: actions; display: flex; gap: 2px; }
+
+.goal-history__amount {
+  grid-area: amount;
+  font-family: var(--font-numeric);
+  font-weight: 700;
+  color: var(--color-positive);
+  text-align: right;
+}
+
+.goal-history__amount.is-negative {
+  color: var(--color-expense);
+}
+
+.goal-history__item.is-pending .goal-history__user {
+  color: var(--color-warning);
+}
+
 /* ── Actions ───────────────────────────────────────────────────────────────────── */
 
 .goal-actions {

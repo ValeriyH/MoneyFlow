@@ -19,7 +19,7 @@
  *
  */
 
-import { PENDING_ENTRIES_KEY_PREFIX, STORAGE_KEYS } from "../config.js";
+import { STORAGE_KEYS, TRANSACTION_QUEUE_KEY_PREFIX } from "../config.js";
 
 /**
  * @param {Storage} storage
@@ -154,7 +154,7 @@ export function currentServerAlignedTime() {
   return Date.now() + loadClockOffset();
 }
 
-/* -- Queue of unsynchronized operations --------------------------------------- */
+/* -- Queue of user transactions ----------------------------------------------- */
 
 /**
  * The queue is separate for each user: records made under one
@@ -163,34 +163,26 @@ export function currentServerAlignedTime() {
  * @param {string | null} login
  * @returns {string}
  */
-function pendingEntriesKey(login) {
-  return PENDING_ENTRIES_KEY_PREFIX + String(login ?? "").trim().toLowerCase();
+function transactionQueueKey(login) {
+  return TRANSACTION_QUEUE_KEY_PREFIX + String(login ?? "").trim().toLowerCase();
 }
 
 /**
  * @param {string | null} login
- * @returns {Array<object>} operations that haven't reached the table yet
+ * @returns {Array<object>} transactions that haven't been accepted by the server yet
  */
-export function loadPendingEntries(login) {
-  const storedEntries = readJsonValue(pendingEntriesKey(login), []);
-  return Array.isArray(storedEntries) ? storedEntries : [];
+export function loadQueuedTransactions(login) {
+  const storedTransactions = readJsonValue(transactionQueueKey(login), []);
+  return Array.isArray(storedTransactions) ? storedTransactions : [];
 }
 
 /**
  * @param {string | null} login
- * @param {Array<object>} pendingEntries
- * @returns {void}
+ * @param {Array<object>} transactions
+ * @returns {boolean} whether it was saved
  */
-export function savePendingEntries(login, pendingEntries) {
-  return writeJsonValue(pendingEntriesKey(login), pendingEntries);
-}
-
-/**
- * @param {string | null} login
- * @returns {boolean} whether there are records in the queue for this login
- */
-export function hasPendingEntries(login) {
-  return loadPendingEntries(login).length > 0;
+export function saveQueuedTransactions(login, transactions) {
+  return writeJsonValue(transactionQueueKey(login), transactions);
 }
 
 /* -- App View ------------------------------------------------------------------ */
@@ -257,11 +249,11 @@ export function loadActivePeriod() {
 * `CACHED_MONTHS_LIMIT` — and agree that the phone's backup
 * will take it.
 *
- * @returns {{ viewer: object, categories: Array<object>, transactions: Array<object>, loadedPeriods: Array<string>, lastSyncedAt: string } | null}
+ * @returns {{ viewer: object, categories: Array<object>, expenses: Array<object>, loadedPeriods: Array<string>, lastSyncedAt: string } | null}
  */
 export function loadCachedSnapshot() {
   const cachedSnapshot = readJsonValue(STORAGE_KEYS.cachedSnapshot, null);
-  return cachedSnapshot && Array.isArray(cachedSnapshot.transactions) ? cachedSnapshot : null;
+  return cachedSnapshot && Array.isArray(cachedSnapshot.expenses) ? cachedSnapshot : null;
 }
 
 /**
@@ -275,6 +267,32 @@ export function saveCachedSnapshot(snapshot) {
 /** @returns {void} */
 export function clearCachedSnapshot() {
   removeValue(STORAGE_KEYS.cachedSnapshot);
+}
+
+/* -- Cache of Goals ----------------------------------------------------------- */
+
+/**
+ * Goals arrive separately from the budget snapshot, so they have their own
+ * cache — for the same reason: the tab must open without a network.
+ *
+ * @returns {Array<object>} last goals received from the server, or empty list
+ */
+export function loadCachedGoals() {
+  const cachedGoals = readJsonValue(STORAGE_KEYS.cachedGoals, []);
+  return Array.isArray(cachedGoals) ? cachedGoals : [];
+}
+
+/**
+ * @param {Array<object>} goals
+ * @returns {void}
+ */
+export function saveCachedGoals(goals) {
+  writeJsonValue(STORAGE_KEYS.cachedGoals, goals);
+}
+
+/** @returns {void} */
+export function clearCachedGoals() {
+  removeValue(STORAGE_KEYS.cachedGoals);
 }
 
 /* -- Appearance --------------------------------------------------------------- */

@@ -1,8 +1,8 @@
 /* ==========================================================================
-   components.css — картки, поля, кнопки, індикатори, графіки
+   components.css — cards, fields, buttons, indicators, charts
    ========================================================================== */
 
-/* ── Картка ─────────────────────────────────────────────────────────────── */
+/* ── Card ───────────────────────────────────────────────────────────────── */
 
 .card {
   padding: var(--space-5);
@@ -11,7 +11,7 @@
   box-shadow: var(--shadow-card);
 }
 
-/* ── Картка ─────────────────────────────────────────────────────────────── */
+/* ── Card ───────────────────────────────────────────────────────────────── */
 
 .card {
   padding: var(--space-5);
@@ -20,8 +20,8 @@
   box-shadow: var(--shadow-card);
 }
 
-/* Згортання працює лише на широких екранах: на вузьких показується
-   рівно одна картка за раз і згортати просто нема чого. */
+/* Collapsing works only on wide screens: narrow ones show exactly
+   one card at a time, so there is nothing to collapse. */
 @media (min-width: 900px) {
   .card--collapsible[data-collapsed="true"] .card__body {
     grid-template-rows: 0fr;
@@ -84,7 +84,7 @@
   gap: var(--space-2);
 }
 
-/* Кнопка згортання потрібна лише там, де є що згортати. */
+/* The collapse button is needed only where there is something to collapse. */
 .card__collapse-icon {
   flex-shrink: 0;
   width: 9px;
@@ -130,10 +130,10 @@
 }
 
 /*
- * Показується, поки місяць ще не прийшов із сервера.
+ * Shown while the month has not arrived from the server yet.
  *
- * Важливо, що це не порожні панелі з нулями: нулі виглядали б так,
- * наче в цьому місяці ніхто нічого не витратив.
+ * It matters that these are not empty panels with zeros: zeros would
+ * look as if nobody had spent anything this month.
  */
 .period-loading {
   padding: var(--space-6) var(--space-4);
@@ -145,7 +145,7 @@
   border-radius: var(--radius-md);
 }
 
-/* ── Поля вводу ─────────────────────────────────────────────────────────── */
+/* ── Input fields ───────────────────────────────────────────────────────── */
 
 .field {
   display: block;
@@ -228,9 +228,9 @@
   color: var(--color-text-tertiary);
 }
 
-/* Приклади виразу «120+80+50» — це не код, а зразок того, що можна
-   ввести. Синій з підкладкою читається як посилання, тому лишаємо
-   тільки моношрифт і курсив, а колір успадковуємо від підказки. */
+/* Expression examples like «120+80+50» are not code but a sample of
+   what can be typed. Blue on a tinted background reads as a link, so
+   only monospace and italics stay, and the colour is inherited from the hint. */
 .field__hint code {
   padding: 0;
   font-size: inherit;
@@ -240,7 +240,7 @@
   border-radius: 0;
 }
 
-/* Чекліст вимог до пароля: видно одразу, без спроб натиснути «Створити». */
+/* Password requirements checklist: visible at once, without trying «Створити» first. */
 .requirements {
   display: flex;
   flex-wrap: wrap;
@@ -271,7 +271,7 @@
   content: "●";
 }
 
-/* ── Редактор суми ──────────────────────────────────────────────────────── */
+/* ── Amount editor ────────────────────────────────────────────────────── */
 
 .amount-editor {
   display: flex;
@@ -316,7 +316,7 @@
   cursor: not-allowed;
 }
 
-/* Рядок, що з'являється лише коли введено вираз, а не одне число. */
+/* A line that appears only when an expression, not a single number, is typed. */
 .amount-preview {
   margin-top: var(--space-2);
   padding: 7px 12px;
@@ -352,21 +352,7 @@ select.field__input {
   background-size: 10px;
 }
 
-/* ── Перемикач типу операції ───────────────────────────────────────────── */
-/*
- * Видалено разом із вкладкою «Дохід»: вводяться лише витрати,
- * тож перемикати між типами більше нема чого.
- * Закоментовано, а не видалено — раптом знадобиться знову,
- * і не доведеться шукати за CSS.
- *
- * .segmented { ... }
- * .segmented__option { ... }
- * .segmented__option.is-active { ... }
- * .segmented__thumb { ... }
- * .segmented[data-active-kind="income"] .segmented__thumb { ... }
- */
-
-/* ── Профіль користувача ────────────────────────────────────────────────── */
+/* ── User profile ──────────────────────────────────────────────────────── */
 
 .profile-chip {
   display: inline-flex;
@@ -401,7 +387,7 @@ select.field__input {
   white-space: nowrap;
 }
 
-/* ── Меню опцій ────────────────────────────────────────────────────────── */
+/* ── Options menu ──────────────────────────────────────────────────────── */
 
 .user-menu-host {
   position: relative;
@@ -420,8 +406,8 @@ select.field__input {
   box-shadow: var(--shadow-raised);
 }
 
-/* На вузькому екрані шпарина праворуч порожня, тож краю безпечніше
-   не торкатися: інакше меню виходить за межі вікна. */
+/* On a narrow screen the gap on the right is empty, so it is safer not
+   to touch the edge: otherwise the menu goes outside the window. */
 .user-menu__header {
   margin: 0;
   padding: 6px 10px 8px;
@@ -462,7 +448,7 @@ select.field__input {
   color: var(--color-text-secondary);
 }
 
-/* ── Категорії (чіпси) ─────────────────────────────────────────────────── */
+/* ── Categories (chips) ───────────────────────────────────────────────── */
 
 .category-field {
   margin: var(--space-5) 0 0;
@@ -497,8 +483,8 @@ select.field__input {
   line-height: 1;
 }
 
-/* Назву категорії краще перенести на другий рядок, ніж обрізати:
-   «Дім/Комуналка» має лишатися читабельною на телефоні. */
+/* A category name is better wrapped to a second line than cut:
+   «Дім/Комуналка» must stay readable on a phone. */
 .chip__label {
   overflow-wrap: anywhere;
 }
@@ -508,10 +494,10 @@ select.field__input {
   border-color: var(--color-border-strong);
 }
 
-/* Неактивна категорія лишається доступною, тож її не можна робити
-   схожою на заблоковану: сірий текст і прибраний курсор читались
-   б як «натиснути не можна». Тому помітка — рамка й тло, а текст
-   лишається контрастним. */
+/* An inactive category stays available, so it must not look
+   blocked: grey text and a removed cursor would read as «cannot be
+   pressed». So the mark is a border and background, and the text
+   keeps its contrast. */
 .chip--inactive {
   background: transparent;
   border-style: dashed;
@@ -530,7 +516,7 @@ select.field__input {
   background: var(--color-surface-muted);
 }
 
-/* ── Перемикач «показати всі категорії» ──────────────────────────────────── */
+/* ── «Show all categories» toggle ────────────────────────────────────────── */
 
 .expand-link {
   margin-top: var(--space-2);
@@ -554,7 +540,7 @@ select.field__input {
   border-color: var(--color-accent);
 }
 
-/* ── Кнопки ────────────────────────────────────────────────────────────── */
+/* ── Buttons ───────────────────────────────────────────────────────────── */
 
 .button {
   display: inline-flex;
@@ -598,9 +584,9 @@ select.field__input {
   width: 100%;
 }
 
-/* Кнопка йде після блоку полів, а не після .field, тож правило
-   «сусідні поля з відступом» її не торкається. У згорнутому стані
-   це помітно: кнопка липне до поля суми. */
+/* The button follows the field block, not a .field, so the
+   «adjacent fields with spacing» rule does not reach it. When collapsed
+   this shows: the button sticks to the amount field. */
 .entry-card > .button--block {
   margin-top: var(--space-4);
 }
@@ -643,7 +629,7 @@ select.field__input {
   color: var(--color-expense);
 }
 
-/* ── Статус форми ──────────────────────────────────────────────────────── */
+/* ── Form status ──────────────────────────────────────────────────────── */
 
 .entry-card__status {
   min-height: 20px;
@@ -658,11 +644,11 @@ select.field__input {
 .entry-card__status[data-tone="warning"] { color: var(--color-warning); }
 .entry-card__status[data-tone="pending"] { color: var(--color-text-secondary); }
 
-/* ── Редагування наявної операції ───────────────────────────────────────── */
+/* ── Editing an existing expense ───────────────────────────────────────── */
 
-/* Банер живе першою точкою згорнутого блоку полів: він з'являється
-   тільки разом із категоріями, тож окремої кнопки « редагувати» не
-   потрібно — вона й так є в кожному рядку списку. */
+/* The banner is the first item of the collapsible field block: it
+   appears only together with the categories, so a separate «edit»
+   button is not needed — every list row already has one. */
 .entry-card__editing {
   display: flex;
   align-items: center;
@@ -697,11 +683,11 @@ select.field__input {
 
 .link-button:hover { color: var(--color-text-primary); }
 
-/* ── Щойно записані ──────────────────────────────────────────────────────── */
+/* ── Just saved ─────────────────────────────────────────────────────────── */
 
-/* Підтвердження, що запис дійшов, ставиться під кнопкою збереження:
-   там, куди дивиться око одразу після натискання. Інакше довелося
-   б перемикатися на інший розділ, щоб перевірити результат. */
+/* The confirmation that a record arrived sits under the save button:
+   where the eye looks right after the click. Otherwise one would have
+   to switch to another section to check the result. */
 
 .recent-entries {
   display: flex;
@@ -738,8 +724,8 @@ select.field__input {
 .recent-entry__status {
   flex: none;
   font-size: 12px;
-  /* Той самий помаранчевий, що й «· очікує» у списку транзакцій:
-     запис у черзі має виглядати однаково скрізь. */
+  /* The same orange as «· очікує» in the expense list:
+     a queued record must look the same everywhere. */
   color: var(--color-warning);
 }
 
@@ -759,7 +745,7 @@ select.field__input {
   font-weight: 500;
 }
 
-/* ── Індикатор синхронізації ───────────────────────────────────────────── */
+/* ── Sync indicator ──────────────────────────────────────────────────── */
 
 .sync-indicator {
   display: inline-flex;
@@ -820,7 +806,7 @@ select.field__input {
   50% { opacity: 0.25; }
 }
 
-/* ── Підсумки ──────────────────────────────────────────────────────────── */
+/* ── Summary ──────────────────────────────────────────────────────────── */
 
 .balance-block {
   display: flex;
@@ -918,7 +904,7 @@ select.field__input {
 .fact dd[data-tone="positive"] { color: var(--color-positive); }
 .fact dd[data-tone="negative"] { color: var(--color-expense); }
 
-/* ── Кільцевий графік ───────────────────────────────────────────────────── */
+/* ── Donut chart ──────────────────────────────────────────────────────── */
 
 .donut-block {
   display: flex;
@@ -987,7 +973,7 @@ select.field__input {
   font-size: 12px;
 }
 
-/* ── Ліміти ────────────────────────────────────────────────────────────── */
+/* ── Limits ───────────────────────────────────────────────────────────── */
 
 .budget-list {
   display: flex;
@@ -1061,22 +1047,22 @@ select.field__input {
 .budget-item__note[data-status="warning"] { color: var(--color-warning); }
 .budget-item__note[data-status="exceeded"] { color: var(--color-expense); }
 
-/* ── Список операцій ────────────────────────────────────────────────────── */
+/* ── Expense list ──────────────────────────────────────────────────────── */
 
-.transaction-list {
+.expense-list {
   display: flex;
   flex-direction: column;
 }
 
-/* Кнопка «показати всі» — по центру списку. `.expand-link` спільний
-   із перемикачем категорій у формі, де він лишається ліворуч,
-   тому центруємо лише тут. */
-.transaction-list__more {
+/* The «show all» button is centred in the list. `.expand-link` is shared
+   with the category toggle in the form, where it stays on the left,
+   so it is centred only here. */
+.expense-list__more {
   display: flex;
   justify-content: center;
 }
 
-.transaction {
+.expense {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1084,11 +1070,11 @@ select.field__input {
   border-bottom: 1px solid var(--color-border);
 }
 
-.transaction:last-child {
+.expense:last-child {
   border-bottom: none;
 }
 
-.transaction__icon {
+.expense__icon {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1100,18 +1086,18 @@ select.field__input {
   border-radius: var(--radius-md);
 }
 
-.transaction__body {
+.expense__body {
   min-width: 0;
   flex: 1;
 }
 
-.transaction__title,
-.transaction__note,
-.transaction__meta {
+.expense__title,
+.expense__note,
+.expense__meta {
   display: block;
 }
 
-.transaction__title {
+.expense__title {
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;
@@ -1119,10 +1105,10 @@ select.field__input {
   white-space: nowrap;
 }
 
-/* Комент стоїть між категорією та датою. Колір — між ними: не
-   такий блідний, як дата, але й не такий важкий, як категорія,
-   щоб око йшло по рядку зверху вниз. */
-.transaction__note {
+/* The note sits between the category and the date. Its colour is in
+   between too: not as pale as the date, not as heavy as the category,
+   so the eye moves down the row from top to bottom. */
+.expense__note {
   font-size: 12px;
   color: var(--color-text-secondary);
   overflow: hidden;
@@ -1130,7 +1116,7 @@ select.field__input {
   white-space: nowrap;
 }
 
-.transaction__meta {
+.expense__meta {
   font-size: 12px;
   color: var(--color-text-tertiary);
   overflow: hidden;
@@ -1138,67 +1124,72 @@ select.field__input {
   white-space: nowrap;
 }
 
-.transaction__amount {
+.expense__amount {
   font-family: var(--font-numeric);
   font-size: 15px;
   font-weight: 700;
   white-space: nowrap;
 }
 
-/* Правила .transaction__amount[data-kind="…"] видалено разом із типами
- * операцій: у списку лише витрати, тож колір один на всіх. */
+/* There are no .expense__amount[data-kind="…"] rules: the list holds
+ * only expenses, so one colour fits all. */
 
-/* Дві дії на рядок: «правити» і «видалити». На екранах без курсора
-   ховати їх за hover нема сенсу — там ховати просто не від чого. */
-.transaction__actions {
+.expense__actions {
   flex-shrink: 0;
   display: flex;
   gap: 2px;
 }
 
-.transaction__action {
+/* Row icon actions (edit / delete) — shared by the expense list and the
+   goal history, so both lists look and behave the same: hidden until the
+   row is hovered or the button is focused, always visible on touch screens. */
+.icon-action {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   font-size: 16px;
+  line-height: 1;
   color: var(--color-text-tertiary);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
+  cursor: pointer;
   opacity: 0;
   transition: opacity var(--motion-fast), color var(--motion-fast),
               background-color var(--motion-fast);
 }
 
 @media (hover: none) {
-  .transaction__action {
+  .icon-action {
     opacity: 1;
   }
 }
 
-.transaction:hover .transaction__action,
-.transaction__action:focus-visible {
+.expense:hover .icon-action,
+.goal-history__item:hover .icon-action,
+.icon-action:focus-visible {
   opacity: 1;
 }
 
-.transaction__action:hover {
+.icon-action:hover {
   color: var(--color-text-primary);
   background: var(--color-surface-muted);
 }
 
-.transaction__actions .transaction__action:last-child:hover {
+/* Specific enough to win over the neutral hover in solid.css. */
+.icon-action.icon-action--danger:hover:not(:disabled) {
   color: var(--color-expense);
   background: var(--color-expense-soft);
 }
 
-.transaction[data-pending="true"] .transaction__title::after {
+.expense[data-pending="true"] .expense__title::after {
   content: "· очікує";
   font-size: 11px;
   font-weight: 500;
   color: var(--color-warning);
 }
 
-/* ── Сповіщення ────────────────────────────────────────────────────────── */
+/* ── Toasts ───────────────────────────────────────────────────────────── */
 
 .toast {
   padding: 12px 16px;

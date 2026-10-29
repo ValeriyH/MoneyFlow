@@ -72,14 +72,16 @@ const DEMO_LIMITS = [
 * @property {Array<Array<string>>} DEMO_GOALS
 * */
 const DEMO_GOALS = [
-  ['Savings', '💻 Ноутбук', '25000', '0', '2026-12-31', '2026-10-01'],
-  ['Project', '🔧 Ремонт авто', '8000', '0', '2027-11-15', '2026-10-01'],
-  ['Savings', '🚆 Подорож до Києва', '35000', '0', '2027-01-31', '2026-10-01'],
-  ['Project', '🛏️ Оновлення інтер\'єру спальні', '12000', '0', '2026-12-31', '2026-10-05'],
-  ['Savings', '🎁 На подарунок', '5000', '0', '2026-12-20', '2026-10-01'],
+  ['Savings', '💻 Ноутбук', '25000', '2026-12-31', '2026-10-01'],
+  ['Project', '🔧 Ремонт авто', '8000', '2027-11-15', '2026-10-01'],
+  ['Savings', '🚆 Подорож до Києва', '35000', '2027-01-31', '2026-10-01'],
+  ['Project', '🛏️ Оновлення інтер\'єру спальні', '12000', '2026-12-31', '2026-10-05'],
+  ['Savings', '🎁 На подарунок', '5000', '2026-12-20', '2026-10-01'],
 ];
- 
-const BOOTSTRAP_SHEET_NAMES = ['Transactions', 'Categories', 'BudgetLimits', 'Users', 'Goals'];
+
+const BOOTSTRAP_SHEET_NAMES = [
+  'Expenses', 'Transactions', 'Categories', 'BudgetLimits', 'Users', 'Goals', 'GoalHistory',
+];
 
 /**
 * Entry point. Run manually from the editor.
@@ -130,8 +132,13 @@ function bootstrapSheets() {
 * @returns {void}
 * */
 function populateSheets(spreadsheet) {
-  writeSheet(spreadsheet, 'Transactions', [
+  writeSheet(spreadsheet, 'Expenses', [
     'ID', 'Дата', 'Категорія', 'Сума', 'Користувач', 'Нотатка', 'Записано',
+  ]);
+
+  // Write-only log of applied user transactions; Операція holds the operation JSON.
+  writeSheet(spreadsheet, 'Transactions', [
+    'ID', 'Користувач', 'Записано', 'Тип', 'Операція',
   ]);
  
   writeSheet(spreadsheet, 'Categories', [
@@ -147,16 +154,20 @@ function populateSheets(spreadsheet) {
     'Ім\'я', 'Колір', 'Пароль', 'Активний',
   ]);
  
-  // New sheet for goals
   writeSheet(spreadsheet, 'Goals', [
-    'ID', 'Назва', 'Цільова сума', 'Поточна сума', 'Дедлайн', 'Початок', 'Тип', 'Активна',
+    'ID', 'Назва', 'Цільова сума', 'Дедлайн', 'Початок', 'Тип', 'Активна',
+  ]);
+
+  // One row per goal change; the goal's current amount is the sum of its rows.
+  writeSheet(spreadsheet, 'GoalHistory', [
+    'ID', 'Ціль', 'Сума', 'Користувач', 'Дата',
   ]);
  
   fillCategories();
   fillLimits();
   fillUsers();
   fillGoals();
-  addSampleTransactions();
+  addSampleExpenses();
 
   SpreadsheetApp.flush();
 }
@@ -231,15 +242,15 @@ function fillUsers() {
   usersSheet.getRange(2, 1, userRows.length, 4).setValues(userRows);
 }
  
-/** Fills the Goals sheet: ID, name, target amount, current amount, deadline, start, type, active. */
+/** Fills the Goals sheet: ID, name, target amount, deadline, start, type, active. */
 function fillGoals() {
   const goalsSheet = SpreadsheetApp.getActive().getSheetByName('Goals');
- 
-  // DEMO_GOALS item: [type, name, target, current, deadline, start]
+
+  // DEMO_GOALS item: [type, name, target, deadline, start]
   const goalRows = DEMO_GOALS.map(function (goal) {
     return [
-      Utilities.getUuid(), goal[1], Number(goal[2]), Number(goal[3]),
-      parseLocalDate(goal[4]), parseLocalDate(goal[5]), goal[0], 'Так',
+      Utilities.getUuid(), goal[1], Number(goal[2]),
+      parseLocalDate(goal[3]), parseLocalDate(goal[4]), goal[0], 'Так',
     ];
   });
 
@@ -281,28 +292,28 @@ function hashPassword(password) {
 }
  
 /**
-* Adds several sample transactions (October 2026, the month with demo limits).
-* Called by bootstrapSheets; can also be run alone on an empty Transactions sheet.
+* Adds several sample expenses (October 2026, the month with demo limits).
+* Called by bootstrapSheets; can also be run alone on an empty Expenses sheet.
 *
-* @property {Array<Array<string>>} DEMO_TRANSACTIONS
+* @property {Array<Array<string>>} DEMO_EXPENSES
 * */
-const DEMO_TRANSACTIONS = [
+const DEMO_EXPENSES = [
   ['2026-10-01', 'Продукти', 2450, 'Я', 'Продуктовий'],
   ['2026-10-02', 'Кафе/Ресторани', 680, 'Дружина', 'Кав\'ярня'],
   ['2026-10-05', 'Авто', 3100, 'Я', 'Бензин'],
   ['2026-10-07', 'Дім/Комуналка', 4200, 'Я', 'Комуналка'],
 ];
  
-function addSampleTransactions() {
+function addSampleExpenses() {
   const spreadsheet = SpreadsheetApp.getActive();
-  const transactionsSheet = spreadsheet.getSheetByName('Transactions');
- 
-  if (transactionsSheet.getLastRow() > 1) {
-    throw new Error('Аркуш Transactions уже містить дані — очистіть його перед демо-заповненням.');
+  const expensesSheet = spreadsheet.getSheetByName('Expenses');
+
+  if (expensesSheet.getLastRow() > 1) {
+    throw new Error('Аркуш Expenses уже містить дані — очистіть його перед демо-заповненням.');
   }
- 
-  transactionsSheet.getRange(2, 1, DEMO_TRANSACTIONS.length, 7).setValues(
-    DEMO_TRANSACTIONS.map(function (sample) {
+
+  expensesSheet.getRange(2, 1, DEMO_EXPENSES.length, 7).setValues(
+    DEMO_EXPENSES.map(function (sample) {
       return [Utilities.getUuid(), sample[0], sample[1], sample[2], sample[3], sample[4], new Date()];
     }),
   );

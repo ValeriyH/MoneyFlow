@@ -1,54 +1,31 @@
 /**
- * budgetStore.js — the single source of truth on the client.
+ * budgetStore.js — the single source of truth for the budget on the client.
  *
- * Holds the current budget snapshot, a queue of unsynchronized records,
- * and the synchronization state. The UI subscribes to changes and re-renders.
- * No UI module knows how the network or localStorage is implemented.
+ * Holds the current budget snapshot and the synchronization state. The UI
+ * subscribes to changes and re-renders. No UI module knows how the network
+ * or localStorage is implemented.
  *
- * Core idea: any action first enters a queue and is immediately shown in the UI,
- * and only then is it sent to the server. Thus, the interface doesn't wait
- * for 3 seconds, and the queue guarantees delivery.
+ * Core idea: any action first enters the transaction queue and is immediately
+ * shown in the UI, and only then is it sent to the server. Thus, the interface
+ * doesn't wait for 3 seconds, and the queue guarantees delivery. What the UI
+ * sees is the server snapshot with queued expense operations applied on top.
  *
  *
  */
 
-import { SYNC_STATE } from "../config.js";
-import {
-  ApiError,
-  API_ERROR_CODE,
-  AUTH_FAILURE_CODES,
-  deleteTransaction,
-  fetchBudgetSnapshot,
-  submitTransaction,
-  updateTransaction,
-  fetchGoals,
-  adjustGoal,
-} from "./apiClient.js";
+import { fetchBudgetSnapshot } from "./apiClient.js";
 import {
   clearCachedSnapshot,
   loadCachedSnapshot,
-  loadPendingEntries,
   saveCachedSnapshot,
-  savePendingEntries,
 } from "./localStore.js";
+import { transactionQueue } from "./transactionQueue.js";
 import { currentPeriodKey, shiftPeriodKey } from "../domain/period.js";
 
 /** Guest — state before the user logged in. */
 const ANONYMOUS_VIEWER = { name: "", color: "#8b95a8" };
 
-/**
- * Errors from which it makes sense to retry the request. The others
- * are server rejections "forever": category doesn't exist, session expired.
- * Such records must be discarded, otherwise they will block the rest of the queue.
- *
- *
- */
-const RETRYABLE_ERROR_CODES = [
-  API_ERROR_CODE.network,
-  API_ERROR_CODE.timeout,
-  API_ERROR_CODE.serverError,
-  API_ERROR_CODE.rateLimited,
-];
+const EXPENSE = "expense";
 
 /**
  * How many months to keep in memory simultaneously.
@@ -62,52 +39,13 @@ const RETRYABLE_ERROR_CODES = [
  */
 const MAX_LOADED_PERIODS = 12;
 
-/** @param {unknown} error */
-function isWorthRetrying(error) {
-  return error instanceof ApiError && RETRYABLE_ERROR_CODES.includes(error.code);
-}
-
 /**
- * Session expired: token signed correctly, all data in it is valid,
- * just time has passed.
- *
- * This is the only rejection after which it is sufficient to log in again:
- * records remain in the queue and will arrive after you log in again.
- * Other rejections (account disabled, password changed, token forged)
- * don't fall here: re-login won't fix them, and the record
- * would block the rest of the queue forever.
- *
- * @param {unknown} error
- *
- */
-function isSessionExpired(error) {
-  return error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired;
-}
-
-/**
- * @param {object} transaction
+ * @param {object} expense
  * @returns {string} month key of the operation, "2026-10"
  *
  */
-function periodKeyOf(transaction) {
-  return String(transaction?.occurredOn ?? "").slice(0, 7);
-}
-
-/**
- * Which months came in the snapshot.
- *
- * The new server names them itself — it's more accurate than any derive
- * from dates, because a month without transactions would otherwise look
-* like "not loaded". The older server doesn't have this field, then we
-* take months from dates.
- *
- * @param {object} snapshot
- * @returns {Array<string>}
- *
- */
-function readCoveredPeriods(snapshot) {
-  if (Array.isArray(snapshot.periods) && snapshot.periods.length > 0) return snapshot.periods;
-  return [...new Set((snapshot.transactions ?? []).map(periodKeyOf))];
+function periodKeyOf(expense) {
+  return String(expense?.occurredOn ?? "").slice(0, 7);
 }
 
 /**
@@ -175,9 +113,9 @@ const CACHED_MONTHS_LIMIT = 3;
  * a correct-looking, but incorrect sum. Better not to show
 * the month at all, than to show half of it.
  *
- * @param {{ transactions: Array<object>, loadedPeriods: Array<string> }} snapshot
+ * @param {{ expenses: Array<object>, loadedPeriods: Array<string> }} snapshot
  * @param {string} activePeriodKey — it is not discarded even if it's the oldest
- * @returns {{ transactions: Array<object>, loadedPeriods: Array<string> }}
+ * @returns {{ expenses: Array<object>, loadedPeriods: Array<string> }}
  *
  */
 function trimSnapshotToRecentMonths(snapshot, activePeriodKey) {
@@ -191,11 +129,62 @@ function trimSnapshotToRecentMonths(snapshot, activePeriodKey) {
 
   return Object.assign({}, snapshot, {
     loadedPeriods: keptPeriods,
-    transactions: (snapshot.transactions ?? []).filter((transaction) =>
-      keptPeriods.includes(String(transaction.occurredOn ?? "").slice(0, 7)),
+    expenses: (snapshot.expenses ?? []).filter((expense) =>
+      keptPeriods.includes(String(expense.occurredOn ?? "").slice(0, 7)),
     ),
   });
 }
+
+/**
+ * Fields of an expense that the server accepts; `id`, `user` and
+ * `recordedAt` are not among them — the server owns those.
+ *
+ * @param {object} expense
+ * @returns {{ occurredOn: string, category: string, amount: number, note: string }}
+ */
+function pickExpenseFields(expense) {
+  return {
+    occurredOn: expense.occurredOn,
+    category: expense.category,
+    amount: expense.amount,
+    note: expense.note ?? "",
+  };
+}
+
+/**
+ * Applies queued expense operations to the server list.
+ *
+ * Queued records are marked `pending`: the list shows them as waiting,
+ * and the entry form recognises its just-saved record by this flag.
+ *
+ * @param {Array<object>} serverExpenses
+ * @param {Array<object>} queuedTransactions — the whole queue, in order
+ * @param {string} viewerName — author of records the server has not seen yet
+ * @returns {Array<object>}
+ */
+function foldPendingExpenses(serverExpenses, queuedTransactions, viewerName) {
+  let expenses = serverExpenses;
+
+  for (const { operation, recordedAt } of queuedTransactions) {
+    if (operation?.type !== EXPENSE) continue;
+    const { action, targetId, data = {} } = operation;
+
+    if (action === "add") {
+      if (!expenses.some((expense) => expense.id === targetId)) {
+        expenses = [...expenses, { ...data, id: targetId, user: viewerName, recordedAt, pending: true }];
+      }
+    } else if (action === "update") {
+      expenses = expenses.map((expense) =>
+        expense.id === targetId ? { ...expense, ...data, pending: true } : expense,
+      );
+    } else if (action === "delete") {
+      expenses = expenses.filter((expense) => expense.id !== targetId);
+    }
+  }
+
+  return expenses;
+}
+
 /** Not-mutable initial state — we return to it on error. */
 function createInitialState() {
   return {
@@ -203,8 +192,8 @@ function createInitialState() {
     viewer: ANONYMOUS_VIEWER,
     /** @type {Array<object>} */
     categories: [],
-    /** @type {Array<object>} */
-    transactions: [],
+    /** @type {Array<object>} server expenses with queued operations applied */
+    expenses: [],
     /**
      * @type {Array<string>} months, whose data is already in memory
      *
@@ -212,35 +201,21 @@ function createInitialState() {
      * dozen kilobytes instead of two megabytes.
      */
     loadedPeriods: [],
-    /** @type {Array<object>} actions that haven't reached the server yet */
-    pendingEntries: loadPendingEntries(null),
-    /** @type {string} ISO-time of the last successful synchronization */
+    /** @type {string} ISO-time of the last snapshot received */
     lastSyncedAt: null,
-    /** @type {string} value of SYNC_STATE */
-    syncState: SYNC_STATE.loading,
-    /** @type {string} short explanation for the indicator */
-    syncMessage: "",
-    /** @type {string | null} machine code of the last error, if any */
-    syncErrorCode: null,
-    /**
-     * The error itself of the last failure — so the login screen can distinguish
-     * "wrong code" from "too many attempts" and show the appropriate one.
-     * @type {Error | null}
-     */
-    lastSyncError: null,
-    /** @type {Array<object>} */
-    goals: [],
+    /** @type {boolean} a snapshot request is in progress */
+    isLoading: false,
+    /** @type {Error | null} why the last snapshot request failed; null after a successful one */
+    loadError: null,
   };
 }
 
 class BudgetStore {
   #state = createInitialState();
+  /** @type {Array<object>} expenses exactly as the server returned them */
+  #serverExpenses = [];
   #listeners = new Set();
   #sessionToken = null;
-  /** @type {string | null} login of the current session: the queue belongs to it */
-  #sessionLogin = null;
-  /** @type {Promise<void> | null} submission that is already in progress */
-  #flushPromise = null;
   /** @type {Set<string>} months that are currently being loaded */
   #loadingPeriods = new Set();
   /** @type {string | null} month that the user is looking at now */
@@ -254,19 +229,31 @@ class BudgetStore {
    * switching doesn't require another request.
    */
   #categoriesByLimitPeriod = new Map();
+  /** @type {number} snapshot requests in progress: a month switch may overlap a reload */
+  #activeLoads = 0;
+
+  constructor() {
+    transactionQueue.subscribe(() => this.#refreshView());
+
+    // Every response to the queue carries a snapshot of the months we asked
+    // for: applying it saves a second request of about 3 seconds.
+    transactionQueue.setRequestContext(() => ({
+      periods: this.#requestedPeriods(),
+      limitPeriod: this.#limitPeriod(),
+    }));
+    transactionQueue.onResponse((response, context) => {
+      this.#applySnapshot(response.snapshot, context.limitPeriod);
+    });
+  }
+
   /**
-   * Token always goes with the login: they define whose queue
-   * we read and whose records we send.
-   *
    * @param {{ token: string, login: string } | null} session
+   * @returns {void}
    */
   setSession(session) {
     this.#sessionToken = session?.token ?? null;
-    this.#sessionLogin = session?.login ?? null;
-
-    // The queue changes with login, so we reload it from
-    // memory: so that the UI shows only the user's own records.
-    this.#patch({ pendingEntries: loadPendingEntries(this.#sessionLogin) });
+    // The queue belongs to the login: another login sees other pending records.
+    this.#refreshView();
   }
 
   /** @returns {Readonly<object>} */
@@ -290,153 +277,70 @@ class BudgetStore {
   }
 
   /**
+   * Rebuilds what the UI sees from the server list and the queue.
+   * Called on every change of either.
+   */
+  #refreshView() {
+    this.#patch({
+      expenses: foldPendingExpenses(this.#serverExpenses, transactionQueue.getPending(), this.#state.viewer.name),
+    });
+  }
+
+  /**
    * Hydration from cache — so that the page is not empty
    * while the request to Google is going.
+   *
+   * @returns {void}
    */
   hydrateFromCache() {
     const cachedSnapshot = loadCachedSnapshot();
     if (!cachedSnapshot) return;
 
+    this.#serverExpenses = cachedSnapshot.expenses ?? [];
     this.#patch({
       viewer: cachedSnapshot.viewer ?? ANONYMOUS_VIEWER,
       categories: cachedSnapshot.categories ?? [],
-      transactions: cachedSnapshot.transactions ?? [],
-      loadedPeriods: Array.isArray(cachedSnapshot.loadedPeriods)
-        ? cachedSnapshot.loadedPeriods
-        : readCoveredPeriods(cachedSnapshot),
+      loadedPeriods: cachedSnapshot.loadedPeriods ?? [],
       lastSyncedAt: cachedSnapshot.lastSyncedAt,
-      pendingEntries: loadPendingEntries(this.#sessionLogin),
-      goals: cachedSnapshot.goals ?? [],
     });
+    this.#refreshView();
   }
 
   /**
-   * Main synchronization loop:
-   * first sends the queue, then reloads the table.
-   * @returns {Promise<boolean>} — whether it succeeded
+   * Reloads all months in memory plus the open one.
+   *
+   * @returns {Promise<void>}
+   * @throws {ApiError} after recording it in `loadError`: the dispatcher
+   *   decides what a failure means (login again, offline, toast)
    */
-  async synchronize() {
-    this.#patch({ syncState: SYNC_STATE.loading, syncMessage: "", syncErrorCode: null, lastSyncError: null });
+  async reload() {
+    const limitPeriod = this.#limitPeriod();
+    const snapshot = await this.#trackLoad(
+      fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods(), limitPeriod),
+    );
+    this.#applySnapshot(snapshot, limitPeriod);
+  }
+
+  /**
+   * Keeps `isLoading` and `loadError` in step with a snapshot request.
+   *
+   * @param {Promise<object>} request
+   * @returns {Promise<object>} the snapshot
+   * @throws the request's error, after recording it
+   */
+  async #trackLoad(request) {
+    this.#activeLoads += 1;
+    this.#patch({ isLoading: true });
 
     try {
-      await this.#flushPendingEntries();
-      await this.#reloadSnapshot();
-
-      this.#patch({ syncMessage: "" });
-      this.#patchSyncStateFromQueue();
-      return true;
+      return await request;
     } catch (error) {
-      this.#handleSyncError(error);
-      return false;
+      this.#patch({ loadError: error });
+      throw error;
+    } finally {
+      this.#activeLoads -= 1;
+      this.#patch({ isLoading: this.#activeLoads > 0 });
     }
-  }
-
-  /**
-   * Synchronized if and only when the queue is empty.
-   * Extracted separately because the state is defined in several places.
-   */
-  #patchSyncStateFromQueue() {
-    this.#patch({
-      syncState: this.#state.pendingEntries.length > 0 ? SYNC_STATE.pending : SYNC_STATE.synced,
-    });
-  }
-
-  /**
-   * Sends the queue entry by entry, so the order is not violated.
-   *
-   * When an submission is already in progress, the second call joins it
-   * and doesn't start a parallel one: otherwise two records could go twice.
-   *
-   * @returns {Promise<void>}
-   */
-  async #flushPendingEntries() {
-    if (this.#flushPromise) return this.#flushPromise;
-
-    this.#flushPromise = this.#sendQueuedEntries().finally(() => {
-      this.#flushPromise = null;
-    });
-
-    return this.#flushPromise;
-  }
-
-  /**
-   * Sends one queue entry with the corresponding action.
-   *
-   * There are three actions, but they all have one in common: all return
-   * an updated snapshot, so `#sendQueuedEntries` doesn't know which
-   * action was sent.
-   *
-   * @param {object} queuedEntry
-   * @param {Array<string>} periods
-   * @param {string} limitPeriod
-   * @returns {Promise<{ snapshot: object }>}
-   */
-  async #sendQueuedEntry(queuedEntry, periods, limitPeriod) {
-    if (queuedEntry.action === "delete") {
-      return deleteTransaction(this.#sessionToken, queuedEntry.transactionId, periods, limitPeriod);
-    }
-
-    if (queuedEntry.action === "update") {
-      return updateTransaction(this.#sessionToken, queuedEntry.transaction, periods, limitPeriod);
-    }
-
-    return submitTransaction(this.#sessionToken, queuedEntry.transaction, periods, limitPeriod);
-  }
-
-  /**
-   * Processes the queue entries one by one — so that the order
-   * is kept, and the record, which was added during the submission,
-   * is also picked up in the same series, and doesn't remain
-   * for later.
-   *
-   * @returns {Promise<void>}
-   */
-  async #sendQueuedEntries() {
-    while (true) {
-      const [nextQueuedEntry] = loadPendingEntries(this.#sessionLogin);
-      if (!nextQueuedEntry) return;
-
-      this.#patch({
-        syncState: SYNC_STATE.pending,
-        pendingEntries: loadPendingEntries(this.#sessionLogin),
-      });
-
-      try {
-        const periods = this.#requestedPeriods();
-        const limitPeriod = this.#limitPeriod();
-
-        const response = await this.#sendQueuedEntry(nextQueuedEntry, periods, limitPeriod);
-
-        this.#applySnapshot(response.snapshot, limitPeriod);
-        this.#removeFromQueue(nextQueuedEntry.id);
-      } catch (error) {
-        // Expired session - not a failure: the record remains
-        // in the queue and will arrive after the next login.
-        if (isSessionExpired(error)) throw error;
-
-        if (!isWorthRetrying(error)) {
-          this.#discardPendingEntry(nextQueuedEntry.id);
-          continue;
-        }
-        throw error;
-      }
-    }
-  }
-
-  /**
-   * Reloads the snapshot.
-   *
-   * `#applySnapshot` does this along with the reading, but the optimistic
-   * copy disappears right after it — because of `#removeFromQueue`. Without
-   * re-writing, the cache would keep it forever: when the tab is
-   * refreshed, the merge wouldn't recognize it as the same record,
-   * so two lines for the same expense would appear in the list.
-   */
-  async #reloadSnapshot() {
-    this.#applySnapshot(
-      await fetchBudgetSnapshot(this.#sessionToken, this.#requestedPeriods(), this.#limitPeriod()),
-      this.#limitPeriod(),
-    );
   }
 
   /**
@@ -486,6 +390,7 @@ class BudgetStore {
    * newer ones in memory.
    *
    * @param {string} periodKey — "2026-10"
+   * @returns {void}
    */
   setActivePeriod(periodKey) {
     this.#activePeriodKey = periodKey;
@@ -494,6 +399,7 @@ class BudgetStore {
   /**
    * Whether there is data for this month.
    * @param {string} periodKey — "2026-10"
+   * @returns {boolean}
    */
   isPeriodLoaded(periodKey) {
     return this.#state.loadedPeriods.includes(periodKey);
@@ -532,56 +438,42 @@ class BudgetStore {
     if (neededPeriods.some((needed) => this.#loadingPeriods.has(needed))) return;
     neededPeriods.forEach((needed) => this.#loadingPeriods.add(needed));
 
-    this.#patch({ syncState: SYNC_STATE.loading });
-
     try {
-      const snapshot = await fetchBudgetSnapshot(this.#sessionToken, neededPeriods, periodKey);
+      const snapshot = await this.#trackLoad(fetchBudgetSnapshot(this.#sessionToken, neededPeriods, periodKey));
       this.#applySnapshot(snapshot, periodKey);
-      this.#patchSyncStateFromQueue();
-    } catch (error) {
-      this.#handleSyncError(error);
+    } catch {
+      // Recorded in loadError by #trackLoad; switching months is not worth a toast.
     } finally {
       neededPeriods.forEach((needed) => this.#loadingPeriods.delete(needed));
     }
   }
 
   /**
-   * Applies the snapshot, sent along with the response to the action —
-   * we skip the second request and take about 3 seconds.
+   * Applies a snapshot — from a plain load or from a queue response.
    *
    * The snapshot covers only the months that were entered in it,
-   * so operations from other months remain: added a record in April,
+   * so expenses from other months remain: added a record in April,
    * and the open month is March, so it doesn't disappear even if it
    * was kicked out from memory.
    *
-   * If the server didn't return the snapshot (e.g.,
-   * deployed an older version of the script) — reload
-   * separately, so the app doesn't break.
-   *
    * @param {object | undefined} snapshot
    * @param {string} limitPeriod — month whose limits came in the snapshot
-   *
+   * @returns {boolean} whether anything was applied
    */
   #applySnapshot(snapshot, limitPeriod) {
     if (!snapshot) return false;
 
-    const coveredPeriods = readCoveredPeriods(snapshot);
+    // The server names the months it read: a month without expenses
+    // would otherwise be indistinguishable from one not loaded.
+    const coveredPeriods = snapshot.periods ?? [];
     if (coveredPeriods.length === 0) return false;
 
     const categories = snapshot.categories ?? [];
     this.#categoriesByLimitPeriod.set(limitPeriod, categories);
 
-    const snapshotTransactions = snapshot.transactions ?? [];
-    const knownIds = new Set(snapshotTransactions.map((transaction) => transaction.id));
-
-    // Other months remain as they are: unsynchronized records
-    // survive even when their month comes into the snapshot:
-    // the server doesn't know about them yet, so they can't be
-    // replaced by anything, and they won't disappear out of thin air.
-    const keptTransactions = this.#state.transactions.filter((transaction) => {
-      if (!coveredPeriods.includes(periodKeyOf(transaction))) return true;
-      return transaction.pending === true && !knownIds.has(transaction.id);
-    });
+    const keptExpenses = this.#serverExpenses.filter(
+      (expense) => !coveredPeriods.includes(periodKeyOf(expense)),
+    );
 
     const loadedPeriods = trimToLimit(
       [...new Set([...this.#state.loadedPeriods, ...coveredPeriods])],
@@ -592,349 +484,128 @@ class BudgetStore {
     // Months that fell out of memory are removed with them:
     // otherwise they would stay in the cache for no reason, and the
     // "loaded" flag would lie.
-    const transactions = [...keptTransactions, ...snapshotTransactions].filter(
-      (transaction) =>
-        transaction.pending === true || loadedPeriods.includes(periodKeyOf(transaction)),
+    this.#serverExpenses = [...keptExpenses, ...(snapshot.expenses ?? [])].filter(
+      (expense) => loadedPeriods.includes(periodKeyOf(expense)),
     );
 
-    const nextState = {
+    this.#patch({
       viewer: snapshot.viewer ?? ANONYMOUS_VIEWER,
       categories,
-      transactions,
       loadedPeriods,
       lastSyncedAt: new Date().toISOString(),
-      goals: snapshot.goals ?? [],
-    };
+      loadError: null,
+    });
+    this.#refreshView();
 
-    saveCachedSnapshot(trimSnapshotToRecentMonths(nextState, this.#activePeriodKey));
-    this.#patch(nextState);
+    // Only the server list is cached: queued records live in the queue
+    // and are folded in again after a reload.
+    saveCachedSnapshot(trimSnapshotToRecentMonths({
+      viewer: this.#state.viewer,
+      categories,
+      expenses: this.#serverExpenses,
+      loadedPeriods,
+      lastSyncedAt: this.#state.lastSyncedAt,
+    }, this.#activePeriodKey));
     return true;
   }
 
   /**
-   * Extracts the error state.
-   *
-   * The code is saved separately from the text — so main.js can
-   * take a decision about re-trying the password without
-   * parsing strings.
-   *
-   * @param {unknown} error
-   *
-   */
-  #handleSyncError(error) {
-    const errorCode = error instanceof ApiError ? error.code : null;
-    const errorMessage = error instanceof Error ? error.message : "Unknown synchronization error";
-
-    if (AUTH_FAILURE_CODES.includes(errorCode)) {
-      this.#patch({
-        syncState: SYNC_STATE.error,
-        syncMessage: errorMessage,
-        syncErrorCode: errorCode,
-        lastSyncError: error,
-      });
-      return;
-    }
-
-    const isOffline = errorCode === API_ERROR_CODE.network && !navigator.onLine;
-    this.#patch({
-      syncState: isOffline ? SYNC_STATE.offline : SYNC_STATE.error,
-      syncMessage: errorMessage,
-      syncErrorCode: errorCode,
-      lastSyncError: error instanceof Error ? error : null,
-    });
-  }
-
-  /**
-   * Adds a transaction: first show it in UI, then send it.
+   * Adds an expense: first show it in UI, then send it.
    *
    * The `user` field is deliberately missing — the server sets it
    * from the session token, so it's impossible to forge the author.
    *
-   * @param {object} transaction
-   * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+   * @param {object} expense — with a client `id`; it becomes the row ID
+   * @returns {Promise<{ deliveredImmediately: boolean, rejected: boolean, error: Error | null }>}
    */
-  async addTransaction(transaction) {
-    const queuedEntryId = this.#enqueuePendingEntry({ action: "add", transaction: { ...transaction } });
-
-    try {
-      await this.#flushPendingEntries();
-      this.#patch({ syncMessage: "" });
-      this.#patchSyncStateFromQueue();
-      return { deliveredImmediately: true, error: null };
-    } catch (error) {
-      // Expired session - not a failure: the record remains
-      // in the queue and will arrive after the next login.
-      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
-        this.#discardPendingEntry(queuedEntryId);
-        this.#patchSyncStateFromQueue();
-      }
-      return { deliveredImmediately: false, error };
-    }
+  addExpense(expense) {
+    const queued = transactionQueue.enqueue({
+      type: EXPENSE,
+      action: "add",
+      targetId: expense.id,
+      data: pickExpenseFields(expense),
+    });
+    return this.#deliver(queued.id);
   }
 
   /**
-   * @param {object} transaction
-   * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+   * @param {object} expense
+   * @returns {Promise<{ deliveredImmediately: boolean, rejected: boolean, error: Error | null }>}
    */
-  async removeTransaction(transaction) {
-    const queuedEntryId = this.#enqueuePendingEntry({ action: "delete", transactionId: transaction.id });
-
-    try {
-      await this.#flushPendingEntries();
-      this.#patch({ syncMessage: "" });
-      this.#patchSyncStateFromQueue();
-      return { deliveredImmediately: true, error: null };
-    } catch (error) {
-      // Expired session - not a failure: the deletion remains
-      // in the queue and will arrive after the next login.
-      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
-        this.#discardPendingEntry(queuedEntryId);
-        this.#patchSyncStateFromQueue();
-      }
-      return { deliveredImmediately: false, error };
+  async removeExpense(expense) {
+    // Never sent — nothing to delete on the server, only in the queue.
+    if (transactionQueue.findUnsentAdd(EXPENSE, expense.id)) {
+      transactionQueue.rewrite((queued) =>
+        queued.operation?.type === EXPENSE && queued.operation.targetId === expense.id ? null : queued,
+      );
+      return { deliveredImmediately: true, rejected: false, error: null };
     }
+
+    const queued = transactionQueue.enqueue({ type: EXPENSE, action: "delete", targetId: expense.id });
+    return this.#deliver(queued.id);
   }
 
   /**
    * Updates an existing record.
    *
-   * Two cases, and they are fundamentally different:
+   * A record whose add is still queued and not sent is edited in the
+   * queue: the server would otherwise get an `update` for a row that
+   * doesn't exist yet. Otherwise an `update` with the full new values
+   * is queued; if the server rejects it, the view falls back to the
+   * server values by itself, because the queued operation is gone.
    *
-   *   the record is already in the table — send the `update` action,
-   *     optimistically change it in place; id remains the server's,
-   *     so merging with the snapshot will replace the copy
-   *     with the version from the table;
-   *
-   *   the record is still in the queue — no separate action is needed.
-   *     it hasn't reached the server yet, so just update the draft
-   *     directly in the queue, otherwise the server would receive
-   *     an `update` for a row that doesn't exist.
-   *
-   * @param {string} transactionId
+   * @param {string} expenseId
    * @param {object} changes — sum, category, date, note
-   * @returns {Promise<{ deliveredImmediately: boolean, error: Error | null }>}
+   * @returns {Promise<{ deliveredImmediately: boolean, rejected: boolean, error: Error | null }>}
    */
-  async updateTransaction(transactionId, changes) {
-    const previous = this.#state.transactions.find((candidate) => candidate.id === transactionId);
+  updateExpense(expenseId, changes) {
+    const previous = this.#state.expenses.find((candidate) => candidate.id === expenseId);
 
     if (!previous) {
-      return { deliveredImmediately: false, error: new Error("Операцію вже не видно у списку") };
+      return Promise.resolve({
+        deliveredImmediately: false,
+        rejected: false,
+        error: new Error("Витрату вже не видно у списку"),
+      });
     }
 
-    const queuedEntryId = previous.pending === true
-      ? this.#amendQueuedEntry(transactionId, changes)
-      : this.#enqueuePendingEntry({
-          action: "update",
-          transactionId,
-          transaction: { ...previous, ...changes, recordedAt: new Date().toISOString() },
-          // Previous values are needed to rollback the edit, if
-          // the server ultimately rejects it: otherwise the record
-          // would stay in the list with new values and just
-          // wait forever.
-          previous: { ...previous },
-        });
+    const data = pickExpenseFields({ ...previous, ...changes });
+    const queuedAdd = transactionQueue.findUnsentAdd(EXPENSE, expenseId);
 
+    if (queuedAdd) {
+      transactionQueue.rewrite((queued) =>
+        queued.id === queuedAdd.id ? { ...queued, operation: { ...queued.operation, data } } : queued,
+      );
+      return this.#deliver(queuedAdd.id);
+    }
+
+    const queued = transactionQueue.enqueue({ type: EXPENSE, action: "update", targetId: expenseId, data });
+    return this.#deliver(queued.id);
+  }
+
+  /**
+   * Flushes the queue and reports the fate of one transaction.
+   *
+   * `rejected` lets the caller skip its own toast: the dispatcher already
+   * shows every refusal from the queue.
+   *
+   * @param {string} queuedId
+   * @returns {Promise<{ deliveredImmediately: boolean, rejected: boolean, error: Error | null }>}
+   */
+  async #deliver(queuedId) {
     try {
-      await this.#flushPendingEntries();
-      this.#patch({ syncMessage: "" });
-      this.#patchSyncStateFromQueue();
-      return { deliveredImmediately: true, error: null };
-    } catch (error) {
-      if (!isWorthRetrying(error) && !isSessionExpired(error)) {
-        this.#discardPendingEntry(queuedEntryId);
-        this.#patchSyncStateFromQueue();
+      const { rejected } = await transactionQueue.flush();
+
+      const ownRejection = rejected.find((rejection) => rejection.transaction.id === queuedId);
+      if (ownRejection) {
+        return { deliveredImmediately: false, rejected: true, error: new Error(ownRejection.message) };
       }
-      return { deliveredImmediately: false, error };
-    }
-  }
 
-  /**
-   * Amends a draft record that hasn't reached the server yet.
-   *
-   * No separate action is added to the queue: the record will be
-   * created with the new values when the queue reaches it.
-   *
-   * @param {string} transactionId
-   * @param {object} changes
-   * @returns {string} the ID of the queue record now describing this edit
-   */
-  #amendQueuedEntry(transactionId, changes) {
-    const currentEntries = loadPendingEntries(this.#sessionLogin);
-    const amendedEntries = currentEntries.map((entry) =>
-      entry.id === transactionId
-        ? { ...entry, transaction: { ...entry.transaction, ...changes } }
-        : entry,
-    );
-
-    savePendingEntries(this.#sessionLogin, amendedEntries);
-
-    this.#patch({
-      pendingEntries: amendedEntries,
-      transactions: this.#state.transactions.map((candidate) =>
-        candidate.id === transactionId ? { ...candidate, ...changes } : candidate,
-      ),
-    });
-
-    return transactionId;
-  }
-
-  /**
-   * Puts an action into the queue and immediately shows it in UI.
-   *
-   * The `user` field is deliberately missing — the server sets it
-   * from the session token, so it's impossible to forge the author.
-   *
-   * @param {object} pendingAction
-   * @returns {string} the ID of the record in the queue
-   */
-  #enqueuePendingEntry(pendingAction) {
-    const queuedEntry = { ...pendingAction, id: crypto.randomUUID() };
-
-    const updatedEntries = [...loadPendingEntries(this.#sessionLogin), queuedEntry];
-    savePendingEntries(this.#sessionLogin, updatedEntries);
-
-    const syncState = navigator.onLine ? SYNC_STATE.pending : SYNC_STATE.offline;
-
-    if (queuedEntry.action === "add") {
-      this.#patch({
-        pendingEntries: updatedEntries,
-        syncState,
-        // The queue ID becomes the temporary record ID. Without it,
-        // the optimistic copy would lack an identifier, and the
-        // merge with the snapshot wouldn't recognize it
-        // as the same record.
-        transactions: [
-          ...this.#state.transactions,
-          { ...queuedEntry.transaction, id: queuedEntry.id, pending: true },
-        ],
-      });
-    } else if (queuedEntry.action === "update") {
-      // Editing changes the record in place: the id remains the server's,
-      // so merging with the snapshot will replace the copy
-      // with the version that came from the table.
-      // The pending flag clears the merge with the original,
-      // until the server eventually confirms it.
-      this.#patch({
-        pendingEntries: updatedEntries,
-        syncState,
-        transactions: this.#state.transactions.map((candidate) =>
-          candidate.id === queuedEntry.transactionId
-            ? { ...queuedEntry.transaction, pending: true }
-            : candidate,
-        ),
-      });
-    } else {
-      this.#patch({
-        pendingEntries: updatedEntries,
-        syncState,
-        transactions: this.#state.transactions.filter(
-          (candidate) => candidate.id !== queuedEntry.transactionId,
-        ),
-      });
-    }
-
-    return queuedEntry.id;
-  }
-
-  /**
-   * Updates the cache of the page.
-   *
-   * `#applySnapshot` does this along with the reading, but the
-   * optimistic copy disappears right after it — because of `#removeFromQueue`.
-   * Without re-writing, the cache would keep it forever: when the tab
-   * is refreshed, the merge wouldn't recognize it
-   * as the same record, so two lines for the same expense would appear
-   * in the list.
-   *
-   *
-   */
-  #saveCache() {
-    saveCachedSnapshot(trimSnapshotToRecentMonths({
-      viewer: this.#state.viewer,
-      categories: this.#state.categories,
-      transactions: this.#state.transactions,
-      loadedPeriods: this.#state.loadedPeriods,
-      lastSyncedAt: this.#state.lastSyncedAt,
-      goals: this.#state.goals,
-    }, this.#activePeriodKey));
-  }
-
-  /** @param {string} queuedEntryId */
-  #removeFromQueue(queuedEntryId) {
-    const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
-    savePendingEntries(this.#sessionLogin, remainingEntries);
-    // The record from the server is already in the snapshot, so the
-    // optimistic copy is removed: otherwise it would stay
-    // in the list as a duplicate of the record already in the table.
-    this.#patch({
-      pendingEntries: remainingEntries,
-      transactions: this.#state.transactions.filter(
-        (transaction) => transaction.id !== queuedEntryId,
-      ),
-    });
-
-    this.#saveCache();
-  }
-
-  /**
-   * Adjusts the current goal amount (addition or subtraction).
-   *
-   * @param {object} goal — { id, amount } — amount can be positive (+) or negative (-)
-   * @returns {Promise<{ success: boolean, error: ApiError | null }>}
-   */
-  async adjustGoal(goal) {
-    if (!this.#sessionToken) return { success: false, error: new Error("Session not initialized") };
-
-    try {
-      const response = await adjustGoal(this.#sessionToken, goal.id, goal.amount);
-
-      // Update the goal in the list (by ID)
-      this.#patch({ 
-        goals: this.#state.goals.map((g) => g.id === goal.id ? { ...g, progress: response.goal.progress, monthlyRequirement: response.goal.monthlyRequirement } : g) 
-      });
-
-      // Save to cache
-      this.#saveCache();
-
-      return { success: true };
+      const isStillQueued = transactionQueue.getPending().some((queued) => queued.id === queuedId);
+      return { deliveredImmediately: !isStillQueued, rejected: false, error: null };
     } catch (error) {
-      if (error instanceof ApiError && error.code === API_ERROR_CODE.sessionExpired) {
-        throw error;
-      }
-      return { success: false, error };
+      return { deliveredImmediately: false, rejected: false, error };
     }
-  }
-
-  /**
-   * Discards the action from the queue forever — when the server finally rejects it.
-   * Retrying such a request is pointless: it would only block the rest of the queue.
-   *
-   * For editing, we rollback the record to previous values: otherwise
-   * it would stay in the list with new values and the
-   * flag "waiting", even though
-   * it will never be sent.
-   *
-   * @param {string} queuedEntryId
-   *
-   */
-  #discardPendingEntry(queuedEntryId) {
-    const [discardedEntry] = loadPendingEntries(this.#sessionLogin)
-      .filter((entry) => entry.id === queuedEntryId);
-    const remainingEntries = loadPendingEntries(this.#sessionLogin).filter((entry) => entry.id !== queuedEntryId);
-    savePendingEntries(this.#sessionLogin, remainingEntries);
-
-    this.#patch({
-      pendingEntries: remainingEntries,
-      transactions: this.#state.transactions
-        .filter((transaction) => transaction.id !== queuedEntryId)
-        .map((transaction) =>
-          discardedEntry?.action === "update" && transaction.id === discardedEntry.transactionId
-            ? { ...discardedEntry.previous }
-            : transaction,
-        ),
-    });
-
-    this.#saveCache();
   }
 
   /**
@@ -944,12 +615,14 @@ class BudgetStore {
    * and should arrive when they log in again. The snapshot cache is
    * cleared — it's the previous user's data, and the next user
    * shouldn't see it.
+   *
+   * @returns {void}
    */
   reset() {
     clearCachedSnapshot();
+    this.#serverExpenses = [];
     this.#state = createInitialState();
-    this.#state = { ...this.#state, pendingEntries: loadPendingEntries(this.#sessionLogin) };
-    for (const listener of this.#listeners) listener(this.#state);
+    this.#refreshView();
   }
 }
 

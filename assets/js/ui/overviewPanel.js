@@ -40,7 +40,7 @@ export function initOverviewPanel() {
    */
   function render(state, periodKey, referenceDate) {
     const summary = buildPeriodSummary(
-      state.transactions,
+      state.expenses,
       state.categories,
       periodKey,
       referenceDate,
@@ -53,7 +53,7 @@ export function initOverviewPanel() {
   }
 
   /**
-   * Main number — the balance remaining from the budget. Below it is not "how many transactions",
+   * Main number — the balance remaining from the budget. Below it is not "how many expenses",
    * but a practical advice: how much you can spend per day to stay within budget.
    * Calculated based on total balance, without distinction by categories.
    *
@@ -78,11 +78,11 @@ export function initOverviewPanel() {
     const dailyAllowance = computeDailyAllowance(summary.balance, periodKey, referenceDate);
 
     // Previous month has already finished — "daily allowance" doesn't make sense here,
-    // so we keep what is true about it: how many transactions were in it.
+    // so we keep what is true about it: how many expenses were in it.
     if (dailyAllowance === null) {
-      return summary.transactionCount === 0
-        ? "Операцій за цей місяць ще немає"
-        : `${summary.transactionCount} операцій за цей місяць`;
+      return summary.expenseCount === 0
+        ? "Витрат за цей місяць ще немає"
+        : `${summary.expenseCount} витрат за цей місяць`;
     }
 
     if (summary.balance < 0) {

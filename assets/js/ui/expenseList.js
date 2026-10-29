@@ -1,5 +1,5 @@
 /**
- * transactionList.js — transactions for the selected month: delete or
+ * expenseList.js — expenses for the selected month: delete or
  * overwrite an existing record with one button.
  *
  *
@@ -7,20 +7,20 @@
 
 import { HISTORY_PAGE_SIZE } from "../config.js";
 import { formatClockTime, formatCurrency, formatShortDate } from "../domain/formatters.js";
-import { filterTransactionsByPeriod, takeRecentTransactions } from "../domain/statistics.js";
+import { filterExpensesByPeriod, takeRecentExpenses } from "../domain/statistics.js";
 import { clearChildren, createElement, findById, on, setVisibility } from "./dom.js";
 
 /**
  * @param {object} dependencies
- * @param {(transaction: object) => void} dependencies.onDeleteRequest
- * @param {(transaction: object) => void} dependencies.onEditRequest
+ * @param {(expense: object) => void} dependencies.onDeleteRequest
+ * @param {(expense: object) => void} dependencies.onEditRequest
  * @returns {{ render: (state: Readonly<object>, periodKey: string) => void }}
  *
  *
  */
-export function initTransactionList({ onDeleteRequest, onEditRequest }) {
-  const listElement = findById("transactionList");
-  const emptyMessageElement = findById("transactionListEmpty");
+export function initExpenseList({ onDeleteRequest, onEditRequest }) {
+  const listElement = findById("expenseList");
+  const emptyMessageElement = findById("expenseListEmpty");
   const countBadgeElement = findById("historyCountBadge");
 
   const categoryMetaByName = new Map();
@@ -37,35 +37,35 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
       categoryMetaByName.set(category.name, category);
     }
 
-    const periodTransactions = filterTransactionsByPeriod(state.transactions, periodKey);
+    const periodExpenses = filterExpensesByPeriod(state.expenses, periodKey);
 
-    countBadgeElement.textContent = periodTransactions.length
-      ? `${periodTransactions.length} операцій`
+    countBadgeElement.textContent = periodExpenses.length
+      ? `${periodExpenses.length} витрат`
       : "—";
 
     // Sorting — always, in two states. Otherwise, the expanded list
     // would show records in the order they are in the table: the server does
-    // not sort them, and `takeRecentTransactions` is the only place where
+    // not sort them, and `takeRecentExpenses` is the only place where
     // the order is defined.
-    const transactionsToRender = takeRecentTransactions(
-      periodTransactions,
-      isExpanded ? periodTransactions.length : HISTORY_PAGE_SIZE,
+    const expensesToRender = takeRecentExpenses(
+      periodExpenses,
+      isExpanded ? periodExpenses.length : HISTORY_PAGE_SIZE,
     );
 
-    const hasHiddenRows = periodTransactions.length > HISTORY_PAGE_SIZE;
+    const hasHiddenRows = periodExpenses.length > HISTORY_PAGE_SIZE;
 
-    setVisibility(emptyMessageElement, transactionsToRender.length === 0);
+    setVisibility(emptyMessageElement, expensesToRender.length === 0);
     clearChildren(listElement);
 
-    for (const transaction of transactionsToRender) {
-      listElement.append(createTransactionItem(transaction));
+    for (const expense of expensesToRender) {
+      listElement.append(createExpenseItem(expense));
     }
 
     if (hasHiddenRows) {
-      const hiddenCount = periodTransactions.length - HISTORY_PAGE_SIZE;
+      const hiddenCount = periodExpenses.length - HISTORY_PAGE_SIZE;
       const expandButton = createElement("button", {
         className: "expand-link",
-        textContent: isExpanded ? "Сховати" : `Показати всі транзакції (${hiddenCount})`,
+        textContent: isExpanded ? "Сховати" : `Показати всі витрати (${hiddenCount})`,
         attributes: { type: "button" },
       });
 
@@ -76,79 +76,79 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
 
       // Button is a list element, so we wrap it in <li>: otherwise the button
       // would be directly in <ul>, which is incorrect markup.
-      listElement.append(createElement("li", { className: "transaction-list__more", children: [expandButton] }));
+      listElement.append(createElement("li", { className: "expense-list__more", children: [expandButton] }));
     }
   }
 
   /**
-   * @param {object} transaction
+   * @param {object} expense
    * @returns {HTMLElement}
    *
    */
-  function createTransactionItem(transaction) {
-    const categoryMeta = categoryMetaByName.get(transaction.category);
+  function createExpenseItem(expense) {
+    const categoryMeta = categoryMetaByName.get(expense.category);
 
-    const itemElement = createElement("li", { className: "transaction" });
-    itemElement.dataset.pending = String(transaction.pending === true);
+    const itemElement = createElement("li", { className: "expense" });
+    itemElement.dataset.pending = String(expense.pending === true);
 
     const iconElement = createElement("span", {
-      className: "transaction__icon",
+      className: "expense__icon",
       // Category might have been removed from the table — then a neutral
       // dot remains in the history so that the old record doesn't disappear for no reason.
       textContent: categoryMeta?.icon ?? "•",
       attributes: { "aria-hidden": "true" },
     });
 
-    const bodyElement = createElement("span", { className: "transaction__body" });
+    const bodyElement = createElement("span", { className: "expense__body" });
     bodyElement.append(
       createElement("span", {
-        className: "transaction__title",
-        textContent: transaction.category,
+        className: "expense__title",
+        textContent: expense.category,
       }),
     );
 
     // Comment — as a separate line. Next to the date and category, it
     // used to take up two or three words, and on a phone, it was a line
     // with no content: only the beginning was visible.
-    if (transaction.note) {
+    if (expense.note) {
       bodyElement.append(
         createElement("span", {
-          className: "transaction__note",
-          textContent: transaction.note,
+          className: "expense__note",
+          textContent: expense.note,
         }),
       );
     }
 
     bodyElement.append(
       createElement("span", {
-        className: "transaction__meta",
-        textContent: buildMetaLine(transaction),
+        className: "expense__meta",
+        textContent: buildMetaLine(expense),
       }),
     );
 
     const amountElement = createElement("span", {
-      className: "transaction__amount",
-      textContent: `−${formatCurrency(transaction.amount)}`,
+      className: "expense__amount",
+      textContent: `−${formatCurrency(expense.amount)}`,
     });
 
     const deleteButtonElement = createElement("button", {
-      className: "transaction__action",
-      textContent: "✕",
-      attributes: { type: "button", "aria-label": `Видалити операцію «${transaction.category}»` },
+      className: "icon-action icon-action--danger",
+      textContent: "🗑",
+      attributes: { type: "button", "aria-label": `Видалити витрату «${expense.category}»` },
     });
-    on(deleteButtonElement, "click", () => onDeleteRequest(transaction));
+    on(deleteButtonElement, "click", () => onDeleteRequest(expense));
 
     // Editing goes into the same form as adding: a separate screen
     // for it would mean a second validation, a second sum expression analysis
     // and a second set of filling rules.
     const editButtonElement = createElement("button", {
-      className: "transaction__action",
+      className: "icon-action",
       textContent: "✎",
-      attributes: { type: "button", "aria-label": `Редагувати операцію «${transaction.category}»` },
+      attributes: { type: "button", "aria-label": `Редагувати витрату «${expense.category}»` },
     });
-    on(editButtonElement, "click", () => onEditRequest(transaction));
+    on(editButtonElement, "click", () => onEditRequest(expense));
 
-    const actionsElement = createElement("span", { className: "transaction__actions" });
+    const actionsElement = createElement("span", { className: "expense__actions" });
     actionsElement.append(editButtonElement, deleteButtonElement);
 
     itemElement.append(iconElement, bodyElement, amountElement, actionsElement);
@@ -158,18 +158,18 @@ export function initTransactionList({ onDeleteRequest, onEditRequest }) {
   /**
    * Third line: when the spending occurred and who submitted it.
    *
-   * @param {object} transaction
+   * @param {object} expense
    * @returns {string}
    *
    */
-  function buildMetaLine(transaction) {
-    const clockTime = formatClockTime(transaction.occurredOn);
-    const datePart = formatShortDate(transaction.occurredOn);
+  function buildMetaLine(expense) {
+    const clockTime = formatClockTime(expense.occurredOn);
+    const datePart = formatShortDate(expense.occurredOn);
     // Time is shown only if it actually exists: in old records
     // it's missing, and an empty string would look like a formatting bug.
     const whenPart = clockTime ? `${datePart}, ${clockTime}` : datePart;
 
-    return `${whenPart} · ${transaction.user || "—"}`;
+    return `${whenPart} · ${expense.user || "—"}`;
   }
 
   return { render };

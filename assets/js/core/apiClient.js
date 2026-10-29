@@ -56,22 +56,52 @@ export const API_ERROR_CODE = {
  * @property {string} id
  * @property {string} name
  * @property {number} targetAmount — target amount (hidden in UI)
- * @property {number} currentAmount — current amount (hidden in UI)
- * @property {string} deadline — "2026-12-31" or "2026-12-31T00:00"
- * @property {string} beginDate — "2026-01-01" or "2026-01-01T00:00"
+ * @property {number} currentAmount — sum of the history (hidden in UI)
+ * @property {string} deadline — "2026-12-31"
  * @property {string} type — "Savings" or "Project"
  * @property {boolean} active — whether to display the goal in the web interface
  * @property {number} progress — completion percentage (0-100), calculated on the server
  * @property {number} monthlyRequirement — how much needs to be saved/spent monthly, calculated on the server
+ * @property {Array<GoalChange>} history — newest first
  *
  *
  *  */
 
 /**
- * A single transaction. pending is not in the snapshot — it is a client copy
- * still in the transmission queue.
+ * One row of a goal's history. pending — a client copy still in the queue.
+ *
+ * @typedef {object} GoalChange
+ * @property {string} id
+ * @property {number} amount — positive adds, negative withdraws
+ * @property {string} user
+ * @property {string} occurredOn — "2026-10-17"
+ * @property {boolean} [pending]
+ *
+ *  */
+
+/**
+ * One action requested by a user. The server sets the author from the token.
  *
  * @typedef {object} Transaction
+ * @property {string} id — client UUID; the server applies each ID once
+ * @property {string} recordedAt — ISO time on the client, informational
+ * @property {{ type: string, action: string, targetId: string, data: object }} operation
+ *
+ *  */
+
+/**
+ * @typedef {object} TransactionResult
+ * @property {string} id — transaction ID
+ * @property {"applied" | "duplicate" | "rejected"} status
+ * @property {string} [error] — why it was rejected, text for the user
+ *
+ *  */
+
+/**
+ * A single expense. pending is not in the snapshot — the client shows
+ * a queued operation on top of the server value.
+ *
+ * @typedef {object} Expense
  * @property {string} id
  * @property {string} occurredOn — "2026-10-17" or "2026-10-17T09:15"
  * @property {string} category
@@ -93,8 +123,7 @@ export const API_ERROR_CODE = {
  * @property {Viewer} viewer
  * @property {Array<BudgetCategory>} categories
  * @property {Array<string>} periods
- * @property {Array<Transaction>} transactions
- * @property {Array<Goal>} goals
+ * @property {Array<Expense>} expenses
  *
  *
  *  */
@@ -146,11 +175,8 @@ export class ApiError extends Error {
  * authenticate         → { ok, token, expiresAt, serverTime }
  * requestRegistration  → { ok, login, isActive }
  * loadSnapshot         → { ok, ...BudgetSnapshot }
- * addTransaction       → { ok, transaction, snapshot }
- * updateTransaction    → { ok, transaction, snapshot }
- * deleteTransaction    → { ok, deletedId, snapshot }
  * fetchGoals           → { ok, goals }
- * adjustGoal            → { ok, goal, snapshot }
+ * submitTransactions   → { ok, results, snapshot, goals }
  * ```
  *
  * An error never returns — it is thrown as `ApiError`.
@@ -278,11 +304,11 @@ export function requestUserRegistration(login, passwordHash) {
 /**
  * Loads the budget snapshot along with the logged-in user.
  *
- * `periods` — months with transactions that the client already keeps in memory.
+ * `periods` — months with expenses that the client already keeps in memory.
  * The server will return only them: this way a 20KB snapshot doesn't
  * grow to megabytes, and loaded months are not re-requested.
  *
- * `limitPeriod` — separately, and it's not a coincidence. Transactions are
+ * `limitPeriod` — separately, and it's not a coincidence. Expenses are
  * needed for two months (open and previous — for comparison), and limits
 * should be only for the open one. Otherwise, the October limit would be
 * shown in September as well, where it wasn't set.
@@ -301,68 +327,28 @@ export function fetchBudgetSnapshot(sessionToken, periods, limitPeriod) {
 }
 
 /**
- * Adds a single transaction to the table. Who spent - is determined by the server
-* from the token, the client does not pass this field.
-*
-* @param {string} sessionToken
-* @param {object} transactionPayload
-* @param {Array<string>} periods
-* @param {string} limitPeriod
-* @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
-* the actual record from the server (with its `id`) and updated data — it is
-* by them that the record is removed from the queue, not by the queue's `id`
-*
-*
-*
-*  */
-export function submitTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
-  return sendCommand({ action: "addTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
-}
-
-/**
- * Deletes a transaction by its stable identifier.
+ * Loads active goals with their history.
  *
  * @param {string} sessionToken
- * @param {string} transactionId
- * @param {Array<string>} periods
- * @param {string} limitPeriod
-* @returns {Promise<{ deletedId: string, snapshot: BudgetSnapshot }>}
-*
-*
-*
-*  */
-export function deleteTransaction(sessionToken, transactionId, periods, limitPeriod) {
-  return sendCommand({ action: "deleteTransaction", sessionToken, transactionId, periods, limitPeriod });
-}
-
-/**
- * Overwrites an existing transaction in place.
- *
- * `transaction` must contain `id` — the server finds the row by it.
- * "Who" and "Recorded" are taken by the server from its own data, not from this
-* payload: forging the author of the change is impossible, and the time of the last
-* record is set by the server itself.
- *
- * @param {string} sessionToken
-* @param {object} transactionPayload
-* @param {Array<string>} periods
-* @param {string} limitPeriod
-* @returns {Promise<{ transaction: Transaction, snapshot: BudgetSnapshot }>}
-* returns what actually remains in the row, not an echo from the payload.
-*
-*
-*
-*  */
-export function updateTransaction(sessionToken, transactionPayload, periods, limitPeriod) {
-  return sendCommand({ action: "updateTransaction", sessionToken, transaction: transactionPayload, periods, limitPeriod });
-}
-
-/** Loads the list of active user goals. */
+ * @returns {Promise<{ goals: Array<Goal> }>}
+ */
 export function fetchGoals(sessionToken) {
   return sendCommand({ action: "fetchGoals", sessionToken });
 }
 
-/** Adjusts the current amount of a goal. Changes only `currentAmount` (`currentAmount` + `amount`). Returns { id, progress, monthlyRequirement }. */
-export function adjustGoal(sessionToken, goalId, amount) {
-  return sendCommand({ action: "adjustGoal", sessionToken, id: goalId, amount });
+/**
+ * Sends queued transactions in one request; the server applies them in order.
+ *
+ * `periods` and `limitPeriod` mean the same as in `fetchBudgetSnapshot`:
+ * the response carries a snapshot, so the client needs no second request.
+ *
+ * @param {string} sessionToken
+ * @param {Array<Transaction>} transactions
+ * @param {Array<string>} periods
+ * @param {string} limitPeriod
+ * @returns {Promise<{ results: Array<TransactionResult>, snapshot: BudgetSnapshot, goals: Array<Goal> }>}
+ * one result per transaction, and data as it is after applying
+ */
+export function submitTransactions(sessionToken, transactions, periods, limitPeriod) {
+  return sendCommand({ action: "submitTransactions", sessionToken, transactions, periods, limitPeriod });
 }

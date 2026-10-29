@@ -61,7 +61,7 @@
   display: none;
 }
 
-.app-main[data-active-view="transactions"] [data-panel]:not([data-panel="transactions"]) {
+.app-main[data-active-view="expenses"] [data-panel]:not([data-panel="expenses"]) {
   display: none;
 }
 

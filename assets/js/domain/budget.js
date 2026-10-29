@@ -14,7 +14,7 @@
  
 import { BUDGET_WARNING_THRESHOLD } from "../config.js";
 import { isCurrentPeriod, remainingDaysInPeriod } from "./period.js";
-import { filterTransactionsByPeriod } from "./statistics.js";
+import { filterExpensesByPeriod } from "./statistics.js";
  
 /**
  * Values for the "Active" column that mean "category is displayed".
@@ -59,7 +59,7 @@ export const BUDGET_STATUS = {
  * Selects categories for which a limit is set for this month and calculates status.
  *
  * @param {Array<object>} categories — the entire category catalog
- * @param {Array<object>} allTransactions — all budget operations
+ * @param {Array<object>} allExpenses — all budget operations
  * @param {string} periodKey
  * @param {Date} [referenceDate]
  * @returns {Array<{
@@ -71,8 +71,8 @@ export const BUDGET_STATUS = {
  *
  *
  */
-export function buildBudgetReport(categories, allTransactions, periodKey, referenceDate = new Date()) {
-  const periodExpenses = filterTransactionsByPeriod(allTransactions, periodKey);
+export function buildBudgetReport(categories, allExpenses, periodKey, referenceDate = new Date()) {
+  const periodExpenses = filterExpensesByPeriod(allExpenses, periodKey);
  
   const spentByCategory = new Map();
   for (const expense of periodExpenses) {

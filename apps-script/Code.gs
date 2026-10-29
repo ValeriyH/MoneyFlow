@@ -1,11 +1,11 @@
 /*
  * Code.gs — server-side of MoneyFlow.
  *
- * Responsible for three things:
- *   doPost(action=loadSnapshot)     — returns a budget snapshot;
- *   doPost(action=addTransaction)   — adds a transaction;
- *   doPost(action=deleteTransaction)— deletes a transaction.
- *   doPost(action=updateTransaction)— overwrites a transaction in place.
+ * Actions:
+ *   doPost(action=loadSnapshot)       — returns a budget snapshot;
+ *   doPost(action=fetchGoals)         — goals with their change history;
+ *   doPost(action=submitTransactions) — applies queued user transactions
+ *                                       (expenses, goal changes).
  *
  * Authorization and sessions — in auth.gs: the password doesn't leave the browser,
 * and the browser only stores the server-signed token.
@@ -21,14 +21,20 @@
 
 /* ── Sheet names (must match the labels in the table) ────────────────── */
 
+const SHEET_EXPENSES = 'Expenses';
 const SHEET_TRANSACTIONS = 'Transactions';
 const SHEET_CATEGORIES = 'Categories';
 const SHEET_BUDGET_LIMITS = 'BudgetLimits';
 const SHEET_USERS = 'Users';
 const SHEET_GOALS = 'Goals';
-// Upper bound for one adjustment: protects the sheet from absurd values (1e308, Infinity).
+const SHEET_GOAL_HISTORY = 'GoalHistory';
+// Upper bound for one goal change: protects the sheet from absurd values (1e308, Infinity).
 const MAX_GOAL_ADJUSTMENT = 1000000000;
-const GOAL_LOCK_TIMEOUT_MS = 10000;
+const TRANSACTION_LOCK_TIMEOUT_MS = 10000;
+// One request carries the whole client queue; the cap keeps it within Apps Script time limits.
+const MAX_TRANSACTIONS_PER_REQUEST = 50;
+// Client-generated UUIDs; the strict pattern also keeps formulas out of the ID cells.
+const ENTITY_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 /**
  * Timezone for all dates and times.
@@ -63,11 +69,15 @@ const HEADER_USER_ACTIVE = 'Активний';
 const HEADER_GOAL_ID = 'ID';
 const HEADER_GOAL_NAME = 'Назва';
 const HEADER_GOAL_TARGET_AMOUNT = 'Цільова сума';
-const HEADER_GOAL_CURRENT_AMOUNT = 'Поточна сума';
 const HEADER_GOAL_DEADLINE = 'Дедлайн';
 const HEADER_GOAL_BEGIN_DATE = 'Початок';
 const HEADER_GOAL_TYPE = 'Тип';
 const HEADER_GOAL_ACTIVE = 'Активна';
+
+const HEADER_GOAL_HISTORY_GOAL_ID = 'Ціль';
+
+const HEADER_TRANSACTION_TYPE = 'Тип';
+const HEADER_TRANSACTION_OPERATION = 'Операція';
 
 /*
  * Columns without which the sheet makes no sense.
@@ -78,7 +88,7 @@ const HEADER_GOAL_ACTIVE = 'Активна';
 * a budget that silently shows zeros. This is how we almost
 * lost data three times already.
  */
-const REQUIRED_TRANSACTION_COLUMNS = [
+const REQUIRED_EXPENSE_COLUMNS = [
   HEADER_ID, HEADER_DATE, HEADER_CATEGORY,
   HEADER_AMOUNT, HEADER_USER, HEADER_NOTE, HEADER_RECORDED_AT,
 ];
@@ -114,8 +124,16 @@ const REQUIRED_USER_COLUMNS = [
 ];
 
 const REQUIRED_GOAL_COLUMNS = [
-  HEADER_GOAL_ID, HEADER_GOAL_NAME, HEADER_GOAL_TARGET_AMOUNT, HEADER_GOAL_CURRENT_AMOUNT,
+  HEADER_GOAL_ID, HEADER_GOAL_NAME, HEADER_GOAL_TARGET_AMOUNT,
   HEADER_GOAL_DEADLINE, HEADER_GOAL_BEGIN_DATE, HEADER_GOAL_TYPE, HEADER_GOAL_ACTIVE,
+];
+
+const REQUIRED_GOAL_HISTORY_COLUMNS = [
+  HEADER_ID, HEADER_GOAL_HISTORY_GOAL_ID, HEADER_AMOUNT, HEADER_USER, HEADER_DATE,
+];
+
+const REQUIRED_TRANSACTION_LOG_COLUMNS = [
+  HEADER_ID, HEADER_USER, HEADER_RECORDED_AT, HEADER_TRANSACTION_TYPE, HEADER_TRANSACTION_OPERATION,
 ];
 
 /* ── Independent Registration ──────────────────────────────────────────────── */
@@ -188,40 +206,21 @@ function doPost(request) {
       case 'loadSnapshot':
         return respondWithJson(Object.assign({ ok: true }, buildSnapshot(viewer, periods, limitPeriod)));
 
-      case 'addTransaction':
-        return respondWithJson({
-          ok: true,
-          transaction: appendTransaction(payload.transaction, viewer),
-          // Return updated data immediately: otherwise the client
-          // would have to make a second request and wait another ~3 seconds.
-          snapshot: buildSnapshot(viewer, periods, limitPeriod),
-        });
-
-      case 'deleteTransaction':
-        deleteTransactionById(payload.transactionId);
-        return respondWithJson({
-          ok: true,
-          deletedId: String(payload.transactionId || '').trim(),
-          snapshot: buildSnapshot(viewer, periods, limitPeriod),
-        });
-
-      case 'updateTransaction':
-        return respondWithJson({
-          ok: true,
-          transaction: updateTransaction(payload.transaction, viewer),
-          snapshot: buildSnapshot(viewer, periods, limitPeriod),
-        });
-
       case 'fetchGoals':
         return respondWithJson({
           ok: true,
           goals: fetchGoals(viewer),
         });
 
-      case 'adjustGoal':
+      case 'submitTransactions':
         return respondWithJson({
           ok: true,
-          goal: adjustGoal(payload, viewer),
+          results: applyTransactions(payload.transactions, viewer),
+          // Fresh data in the same response, built once for the whole batch,
+          // even if nothing changed: a duplicate usually means the first
+          // response was lost, and the client still needs to see the result.
+          snapshot: buildSnapshot(viewer, periods, limitPeriod),
+          goals: fetchGoals(viewer),
         });
 
       default:
@@ -317,9 +316,9 @@ function parsePeriodsList(rawPeriods) {
 * months arrived and replaces its own; the rest is not touched.
 *
 * @param {BudgetUser} viewer
-*   @param {Array<string>} periods — transactions for these months
+*   @param {Array<string>} periods — expenses for these months
 *   @param {string} limitPeriod — limits for exactly this month
-*   @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, transactions: Array<object> }}
+*   @returns {{ serverTime: string, viewer: object, categories: Array<object>, periods: Array<string>, expenses: Array<object> }}
  */
 function buildSnapshot(viewer, periods, limitPeriod) {
   return {
@@ -327,8 +326,7 @@ function buildSnapshot(viewer, periods, limitPeriod) {
     viewer: { name: viewer.name, color: viewer.color },
     categories: readCategoriesWithLimits([limitPeriod]),
     periods: periods,
-    transactions: readTransactions(periods),
-    goals: fetchGoals(viewer)
+    expenses: readExpenses(periods),
   };
 }
 
@@ -616,7 +614,7 @@ function resetUserPassword(userName, newPassword) {
 
 /**
  * Deletes a person from the Users sheet. They will no longer be able to log in,
-* and all their past history remains in Transactions.
+* and all their past history remains in Expenses and GoalHistory.
 *
 *   removeUser('Оля');
 *
@@ -755,7 +753,7 @@ function readCategories() {
 }
 
 /**
- * Transactions for only the specified months.
+ * Expenses for only the specified months.
 *
 * The sheet is not read completely. First, one column with the date — in eight
 * times fewer cells than all columns, - to find the boundaries of the required
@@ -764,12 +762,12 @@ function readCategories() {
 * @param {Array<string>} periods — keys "YYYY-MM"
 * @returns {Array<object>}
  */
-function readTransactions(periods) {
-  const sheet = getOptionalSheet(SHEET_TRANSACTIONS);
+function readExpenses(periods) {
+  const sheet = getOptionalSheet(SHEET_EXPENSES);
   if (!sheet) return [];
 
   const header = readSheetHeader(sheet);
-  requireSheetColumns(SHEET_TRANSACTIONS, header.index, REQUIRED_TRANSACTION_COLUMNS);
+  requireSheetColumns(SHEET_EXPENSES, header.index, REQUIRED_EXPENSE_COLUMNS);
 
   const lastRowIndex = sheet.getLastRow();
   const lastColumnIndex = sheet.getLastColumn();
@@ -788,14 +786,14 @@ function readTransactions(periods) {
     .getRange(rowRange.firstRow, 1, rowRange.lastRow - rowRange.firstRow + 1, lastColumnIndex)
     .getValues();
 
-  const transactions = [];
+  const expenses = [];
   let skippedRowsCount = 0;
 
   sliceValues.forEach(function (dataRow) {
     const record = mapRowToRecord(dataRow, columnIndexByName);
     const occurredOn = toIsoDateTime(record[HEADER_DATE]);
 
-    // A transaction from another month is just ignored — it ended up in the range
+    // An expense from another month is just ignored — it ended up in the range
     // due to the padding for entries added with a backdate.
     if (occurredOn && periods.indexOf(occurredOn.slice(0, 7)) === -1) return;
 
@@ -806,7 +804,7 @@ function readTransactions(periods) {
       return;
     }
 
-    transactions.push({
+    expenses.push({
       id: String(record[HEADER_ID] || '').trim() || Utilities.getUuid(),
       occurredOn: occurredOn,
       category: String(record[HEADER_CATEGORY] || 'Інше').trim(),
@@ -821,7 +819,7 @@ function readTransactions(periods) {
     console.warn('Пропущено рядків без суми або дати: ' + skippedRowsCount);
   }
 
-  return transactions;
+  return expenses;
 }
 
 /**
@@ -862,210 +860,118 @@ function findRowRangeByPeriods(sheet, lastRowIndex, dateColumnIndex, periods) {
   };
 }
 
-/* ── Writing data ─────────────────────────────────────────────────────────── */
+/* ── Operation: expense ─────────────────────────────────────────────────── */
 
 /**
- * @param {object} payload — form data; the "User" field is ignored
-* @param {BudgetUser} viewer — authenticated user
-* @returns {object} created or already present transaction
+ * Adds, edits or deletes one Expenses row.
+ *
+ * Idempotent by targetId, like every operation handler: a retry may arrive
+ * after the row was written but before the log marked the transaction, so
+ * adding an existing row and deleting a missing one both succeed without changes.
+ *
+ * @param {{ action: string, targetId: string, data: object }} operation
+ *   data for add and update: { occurredOn, category, amount, note? }
+ * @param {BudgetUser} viewer
+ * @returns {object} the data actually applied — it goes to the log
+ * @throws {RequestError}
  */
-function appendTransaction(payload, viewer) {
-  if (!payload || typeof payload !== 'object') {
-    throw new RequestError('Не передано дані операції', 'BAD_REQUEST');
+function applyExpense(operation, viewer) {
+  const expensesSheet = getRequiredSheet(SHEET_EXPENSES);
+  const expensesHeader = readSheetHeader(expensesSheet);
+  requireSheetColumns(SHEET_EXPENSES, expensesHeader.index, REQUIRED_EXPENSE_COLUMNS);
+
+  const rowIndex = findExpenseRowIndexById(expensesSheet, operation.targetId, expensesHeader.index);
+
+  if (operation.action === 'delete') {
+    if (rowIndex !== -1) expensesSheet.deleteRow(rowIndex);
+    return {};
   }
 
-  const amount = toPositiveNumber(payload.amount);
-  const occurredOn = toIsoDateTime(payload.occurredOn);
+  const fields = parseExpenseFields(operation.data);
+
+  if (operation.action === 'add') {
+    if (rowIndex !== -1) return fields;
+
+    appendRecordByColumnNames(expensesSheet, expensesHeader, [
+      [HEADER_ID, operation.targetId],
+      [HEADER_DATE, fields.occurredOn],
+      [HEADER_CATEGORY, fields.category],
+      [HEADER_AMOUNT, fields.amount],
+      [HEADER_USER, viewer.name],
+      [HEADER_NOTE, fields.note],
+      [HEADER_RECORDED_AT, new Date()],
+    ]);
+    return fields;
+  }
+
+  if (rowIndex === -1) {
+    throw new RequestError('Витрату з таким ID не знайдено', 'BAD_REQUEST');
+  }
+
+  // «Користувач» is not overwritten: the expense was made by whoever entered
+  // it, even if someone else corrected the date later. «Записано» is the time
+  // of the last write to the row.
+  const index = expensesHeader.index;
+  const setCell = function (columnName, value) {
+    expensesSheet.getRange(rowIndex, index.get(columnName.toLowerCase()) + 1).setValue(value);
+  };
+  setCell(HEADER_DATE, fields.occurredOn);
+  setCell(HEADER_CATEGORY, fields.category);
+  setCell(HEADER_AMOUNT, fields.amount);
+  setCell(HEADER_NOTE, fields.note);
+  setCell(HEADER_RECORDED_AT, new Date());
+
+  return fields;
+}
+
+/**
+ * @param {object} data
+ * @returns {{ occurredOn: string, category: string, amount: number, note: string }}
+ * @throws {RequestError}
+ */
+function parseExpenseFields(data) {
+  const amount = toPositiveNumber(data.amount);
+  const occurredOn = toIsoDateTime(data.occurredOn);
+  const category = String(data.category || '').trim();
 
   if (!amount) {
     throw new RequestError('Сума має бути додатним числом', 'BAD_REQUEST');
   }
   if (!occurredOn) {
-    throw new RequestError('Не вдалося розпізнати дату: ' + payload.occurredOn, 'BAD_REQUEST');
+    throw new RequestError('Не вдалося розпізнати дату: ' + data.occurredOn, 'BAD_REQUEST');
   }
-
-  const categoryName = String(payload.category || '').trim();
-  if (!categoryName) {
+  if (!category) {
     throw new RequestError('Не вказано категорію', 'BAD_REQUEST');
   }
 
-  const transactionId = String(payload.id || '').trim() || Utilities.getUuid();
-  const note = String(payload.note || '').trim().slice(0, 200);
-
-  const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
-  const transactionsHeader = readSheetHeader(transactionsSheet);
-  const indexByName = transactionsHeader.index;
-  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
-
-  const createdTransaction = {
-    id: transactionId,
+  return {
     occurredOn: occurredOn,
-    category: categoryName,
+    category: category,
     amount: amount,
-    user: viewer.name,
-    note: note,
-    recordedAt: new Date().toISOString(),
+    note: String(data.note || '').trim().slice(0, 200),
   };
-
-  // The client generates the ID beforehand. If the request arrives twice — after
-  // a connection break and re-sending from the queue — we don't duplicate
-  // the row, but return what was already saved.
-  const existingRowIndex = findTransactionRowIndexById(transactionsSheet, transactionId, indexByName);
-  if (existingRowIndex !== -1) {
-    return createdTransaction;
-  }
-
-  // The order of values repeats the Transactions header, where there is no
-  // longer a "Type" column: income is not entered.
-  appendRowByColumnNames(transactionsSheet, [
-    transactionId,
-    occurredOn,
-    categoryName,
-    amount,
-    viewer.name,
-    note,
-    new Date(),
-  ], transactionsHeader);
-
-  return createdTransaction;
 }
 
 /**
- * Finds the transaction row by its ID.
-*
-* @param {Sheet} transactionsSheet
-* @param {string} transactionId
-* @param {Map<string, number>} indexByName - header index, already read
-* @returns {number} row number from one or -1
-* @throws {RequestError} if the ID column is missing: silently assuming it's
-*   missing would mean every repeat request writes a duplicate.
+ * Finds the expense row by its ID.
+ *
+ * @param {Sheet} expensesSheet
+ * @param {string} expenseId
+ * @param {Map<string, number>} indexByName - header index, already read
+ * @returns {number} row number from one or -1
  */
-function findTransactionRowIndexById(transactionsSheet, transactionId, indexByName) {
-  const normalizedId = String(transactionId || '').trim();
-  if (normalizedId === '') return -1;
-
-  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, [HEADER_ID]);
-
-  const idColumnIndex = indexByName.get(HEADER_ID.toLowerCase());
-
-  const lastRowIndex = transactionsSheet.getLastRow();
+function findExpenseRowIndexById(expensesSheet, expenseId, indexByName) {
+  const lastRowIndex = expensesSheet.getLastRow();
   if (lastRowIndex < 2) return -1;
 
-  const idColumnValues = transactionsSheet
-    .getRange(2, idColumnIndex + 1, lastRowIndex - 1, 1)
-    .getValues()
-    .map(function (row) {
-      return String(row[0]).trim();
-    });
+  const idColumnNumber = indexByName.get(HEADER_ID.toLowerCase()) + 1;
+  const idColumnValues = expensesSheet.getRange(2, idColumnNumber, lastRowIndex - 1, 1).getValues();
 
   for (let offset = 0; offset < idColumnValues.length; offset += 1) {
-    if (idColumnValues[offset] === normalizedId) return offset + 2;
+    if (String(idColumnValues[offset][0]).trim() === expenseId) return offset + 2;
   }
 
   return -1;
-}
-
-/**
- * @param {string} transactionId
- * */
-function deleteTransactionById(transactionId) {
-  const normalizedId = String(transactionId || '').trim();
-  if (normalizedId === '') {
-    throw new RequestError('Не передано ID операції', 'BAD_REQUEST');
-  }
-
-  const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
-  const transactionsHeader = readSheetHeader(transactionsSheet);
-  const indexByName = transactionsHeader.index;
-  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
-  const rowIndex = findTransactionRowIndexById(transactionsSheet, normalizedId, indexByName);
-
-  if (rowIndex === -1) {
-    throw new RequestError('Операцію з таким ID не знайдено', 'BAD_REQUEST');
-  }
-
-  transactionsSheet.deleteRow(rowIndex);
-}
-
-/**
- * Updates an existing transaction.
-*
-* Rules that distinguish it from addition:
-*
-*   ID does not change - by it the entry is already identified in the table;
-*   "User" does not change - the transaction was made by the person who
-*     made the expense, even if the date was corrected by someone else;
-*   "RecordedAt" is overwritten - this is the time of the last entry about the row.
-*
-* @param {object} payload
-* @returns {object} updated transaction
- */
-function updateTransaction(payload, viewer) {
-  if (!payload || typeof payload !== 'object') {
-    throw new RequestError('Не передано дані операції', 'BAD_REQUEST');
-  }
-
-  const transactionId = String(payload.id || '').trim();
-  if (transactionId === '') {
-    throw new RequestError('Не передано ID операції', 'BAD_REQUEST');
-  }
-
-  const amount = toPositiveNumber(payload.amount);
-  const occurredOn = toIsoDateTime(payload.occurredOn);
-
-  if (!amount) {
-    throw new RequestError('Сума має бути додатним числом', 'BAD_REQUEST');
-  }
-  if (!occurredOn) {
-    throw new RequestError('Не вдалося розпізнати дату: ' + payload.occurredOn, 'BAD_REQUEST');
-  }
-
-  const categoryName = String(payload.category || '').trim();
-  if (!categoryName) {
-    throw new RequestError('Не вказано категорію', 'BAD_REQUEST');
-  }
-
-  const note = String(payload.note || '').trim().slice(0, 200);
-
-  const transactionsSheet = getRequiredSheet(SHEET_TRANSACTIONS);
-  const transactionsHeader = readSheetHeader(transactionsSheet);
-  const indexByName = transactionsHeader.index;
-  requireSheetColumns(SHEET_TRANSACTIONS, indexByName, REQUIRED_TRANSACTION_COLUMNS);
-
-  const rowIndex = findTransactionRowIndexById(transactionsSheet, transactionId, indexByName);
-  if (rowIndex === -1) {
-    throw new RequestError('Операцію з таким ID не знайдено', 'BAD_REQUEST');
-  }
-
-  const occurredOnColumnIndex = indexByName.get(HEADER_DATE.toLowerCase());
-  const categoryColumnIndex = indexByName.get(HEADER_CATEGORY.toLowerCase());
-  const amountColumnIndex = indexByName.get(HEADER_AMOUNT.toLowerCase());
-  const userColumnIndex = indexByName.get(HEADER_USER.toLowerCase());
-  const noteColumnIndex = indexByName.get(HEADER_NOTE.toLowerCase());
-  const recordedAtColumnIndex = indexByName.get(HEADER_RECORDED_AT.toLowerCase());
-
-  transactionsSheet.getRange(rowIndex, occurredOnColumnIndex + 1, 1, 1).setValue(occurredOn);
-  transactionsSheet.getRange(rowIndex, categoryColumnIndex + 1, 1, 1).setValue(categoryName);
-  transactionsSheet.getRange(rowIndex, amountColumnIndex + 1, 1, 1).setValue(amount);
-  transactionsSheet.getRange(rowIndex, noteColumnIndex + 1, 1, 1).setValue(note);
-  transactionsSheet.getRange(rowIndex, recordedAtColumnIndex + 1, 1, 1).setValue(new Date());
-
-  // User is not overwritten, so in the response we return what
-  // actually remained in the row. Echo from payload would be a lie: the client
-  // could have sent any name, and the server ignored it anyway.
-  const storedUser = String(
-    transactionsSheet.getRange(rowIndex, userColumnIndex + 1, 1, 1).getValue() ?? '',
-  ).trim();
-
-  return {
-    id: transactionId,
-    occurredOn: occurredOn,
-    category: categoryName,
-    amount: amount,
-    user: storedUser,
-    note: note,
-    recordedAt: new Date().toISOString(),
-  };
 }
 
 /* ── Helper functions for table work ────────────────────────────────────────── */
@@ -1276,14 +1182,14 @@ function toPositiveNumber(rawValue) {
  * Month key «YYYY-MM» from any format it might have been entered in.
  *
  * Google Sheets turns «2026-10» into a date if the column is not
- * відформатована як текст. Тоді в таблицю приходить об'єкт Date, а
- * String() з нього дає «Mon Oct 01 2026…» — ключ не збігається
- * ні з чим, і рядок непомітно випадає з бюджету.
+ * formatted as text. Then a Date object arrives from the sheet, and
+ * String() of it gives «Mon Oct 01 2026…» — the key matches nothing,
+ * and the row silently drops out of the budget.
  *
- * Тому приймаємо три вигляди: об'єкт Date, «2026-10» і «2026-10-01».
+ * So three forms are accepted: a Date object, «2026-10» and «2026-10-01».
  *
  * @param {unknown} rawValue
- * @returns {string} «2026-10» або порожній рядок, якщо розібрати не вдалося
+ * @returns {string} «2026-10», or empty string if it cannot be parsed
  */
 function toPeriodKey(rawValue) {
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
@@ -1301,19 +1207,19 @@ function toPeriodKey(rawValue) {
 }
 
 /**
- * Приймає «2026-10-05», «2026-10-05T14:30», дату з таблиці або
- * ISO-рядок — і повертає той самий вигляд.
+ * Accepts «2026-10-05», «2026-10-05T14:30», a date from the sheet or
+ * an ISO string — and returns the same shape.
  *
- * Час не вигадується: якщо його немає, результат лишається без
- * часу. Запис, внесений тиждень тому без часу, інакше показував би
- * час того тижня, коли його читали, — і виглядав би щойно доданим.
+ * Time is not invented: if there is none, the result stays without
+ * time. Otherwise a record entered a week ago without time would show
+ * the time it was read at — and look as if it had just been added.
  *
  * @param {unknown} rawValue
- * @returns {string} «2026-10-05T14:30», «2026-10-05» або порожній рядок
+ * @returns {string} «2026-10-05T14:30», «2026-10-05» or empty string
  */
 function toIsoDateTime(rawValue) {
-  // Об'єкт Date зустрічається лише в клітинках, куди хтось вписав
-  // дату руками: Sheets розпізнав її як справжню дату, а не текст.
+  // A Date object appears only in cells where someone typed the date
+  // by hand: Sheets recognised it as a real date rather than text.
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
     return Utilities.formatDate(rawValue, TIMEZONE, "yyyy-MM-dd'T'HH:mm");
   }
@@ -1328,9 +1234,9 @@ function toIsoDateTime(rawValue) {
 }
 
 /**
- * Приймає «2026-10-05», дату з таблиці або ISO-рядок.
+ * Accepts «2026-10-05», a date from the sheet or an ISO string.
  * @param {unknown} rawValue
- * @returns {string} «2026-10-05» або порожній рядок
+ * @returns {string} «2026-10-05» or empty string
  */
 function toIsoDate(rawValue) {
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
@@ -1351,7 +1257,7 @@ function toIsoDate(rawValue) {
 
 /**
  * @param {unknown} rawValue
- * @returns {string} ISO-час або порожній рядок
+ * @returns {string} ISO time or empty string
  */
 function toIsoTimestamp(rawValue) {
   if (Object.prototype.toString.call(rawValue) === '[object Date]') {
@@ -1362,28 +1268,27 @@ function toIsoTimestamp(rawValue) {
   return isNaN(parsedDate.getTime()) ? '' : parsedDate.toISOString();
 }
 
-/* ── Відповіді та помилки ───────────────────────────────────────────────── */
+/* ── Responses and errors ───────────────────────────────────────────────── */
 
 /**
- * Помилка запиту.
+ * Request error.
  *
- * Має два тексти:
- *   message       - що пішло не так. Йде в `error` відповіді й у журнал.
- *   displayMessage - що показати людині. Йде в `displayError`.
+ * Carries two texts:
+ *   message        - what went wrong. Goes to the response `error` and the log.
+ *   displayMessage - what to show the person. Goes to `displayError`.
  *
- * Розділено для одного випадку: сервер може знати, що в таблиці
- * зламаний хеш користувача, але сказати про це тому, хто просто
- * намагається вгадати логін, не можна - інакше відповідь видає
- * перелік тих, хто тут зареєстрований. Деталі лишаються в error,
- * на екрані з'являється нейтральний текст.
+ * Split for one case: the server may know that a user's hash in the
+ * sheet is broken, but must not tell that to someone who is just
+ * guessing logins — otherwise the response reveals who is registered
+ * here. Details stay in error, the screen shows a neutral text.
  *
- * Якщо displayMessage не задано, показується те саме, що в error.
+ * If displayMessage is not given, the same text as in error is shown.
  */
 class RequestError extends Error {
   /**
    * @param {string} message
    * @param {string} code
-   * @param {{ [key: string]: unknown }} [details] — додаткові поля відповіді
+   * @param {{ [key: string]: unknown }} [details] — extra response fields
    * @param {string} [displayMessage]
    */
   constructor(message, code, details, displayMessage) {
@@ -1406,12 +1311,12 @@ function respondWithJson(payload) {
 }
 
 /**
- * Apps Script не дозволяє керувати HTTP-кодом, тому код
- * помилки їде в тілі відповіді.
+ * Apps Script does not allow setting the HTTP status, so the error
+ * code travels in the response body.
  *
- * Формат помилки:
- *   error        - для журналу й розробника
- *   displayError - те, що показує сторінка
+ * Error format:
+ *   error        - for the log and the developer
+ *   displayError - what the page shows
  *
  * @param {Error} error
  * @returns {TextOutput}
@@ -1441,9 +1346,9 @@ function respondWithError(error) {
 /**
  * Calculates the progress percentage of a goal.
  *
- * @param {number} currentAmount — поточна сума
- * @param {number} targetAmount — цільова сума
- * @returns {number} відсоток від 0 до 100
+ * @param {number} currentAmount — current amount
+ * @param {number} targetAmount — target amount
+ * @returns {number} percentage from 0 to 100
  */
 function calculateGoalProgress(currentAmount, targetAmount) {
   if (targetAmount <= 0) return 100;
@@ -1459,10 +1364,10 @@ function calculateGoalProgress(currentAmount, targetAmount) {
  * 2. Count months from the start of accumulation to the deadline (not from beginDate)
  * 3. If the deadline has already passed — return 0
  *
- * @param {number} currentAmount — поточна сума
- * @param {number} targetAmount — цільова сума
- * @param {string} beginDate — дата початку (РРРР-ММ-ДД)
- * @param {string} deadline — дата дедлайну (РРРР-ММ-ДД)
+ * @param {number} currentAmount — current amount
+ * @param {number} targetAmount — target amount
+ * @param {string} beginDate — start date (YYYY-MM-DD)
+ * @param {string} deadline — deadline date (YYYY-MM-DD)
  * @returns {number} monthly amount, or 0 if the deadline has passed or the goal is reached
  */
 function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, deadline) {
@@ -1496,124 +1401,454 @@ function calculateMonthlyRequirement(currentAmount, targetAmount, beginDate, dea
   return Math.round(remainingAmount / divisor);
 }
 
-/* ── API функції для цілей ────────────────────────────────────────────────────── */
+/* ── Goals ──────────────────────────────────────────────────────────────── */
 
 /**
- * Retrieves the list of active goals for the user.
+ * Active goals with their change history.
+ *
+ * The current amount is not stored anywhere: it is the sum of the goal's
+ * GoalHistory rows. A stored copy next to the history would sooner or later
+ * disagree with it, and nobody could tell which one is right.
  *
  * @param {BudgetUser} viewer
- * @returns {Array<object>} список цілей з розрахунками прогресу та щомісячної суми
+ * @returns {Array<object>} goals with progress, monthly requirement and history (newest first)
  */
 function fetchGoals(viewer) {
   const records = readSheetAsRecords(SHEET_GOALS, REQUIRED_GOAL_COLUMNS);
-  
+  const historyByGoalId = groupGoalHistoryByGoalId(
+    readSheetAsRecords(SHEET_GOAL_HISTORY, REQUIRED_GOAL_HISTORY_COLUMNS),
+  );
+
   return records
     .filter(function (record) {
       return isTruthyFlag(record[HEADER_GOAL_ACTIVE]);
     })
     .map(function (record) {
-      const current = toPositiveNumber(record[HEADER_GOAL_CURRENT_AMOUNT]);
+      const id = String(record[HEADER_GOAL_ID] || '').trim();
+      const history = historyByGoalId[id] || [];
+      const current = sumGoalChangeAmounts(history);
       const target = toPositiveNumber(record[HEADER_GOAL_TARGET_AMOUNT]);
       const begin = toIsoDate(record[HEADER_GOAL_BEGIN_DATE]);
       const deadline = toIsoDate(record[HEADER_GOAL_DEADLINE]);
 
       return {
-        id: String(record[HEADER_GOAL_ID] || '').trim(),
+        id: id,
         name: String(record[HEADER_GOAL_NAME] || '').trim(),
         deadline: deadline,
         type: String(record[HEADER_GOAL_TYPE] || '').trim(),
         active: isTruthyFlag(record[HEADER_GOAL_ACTIVE]),
+        targetAmount: target,
+        currentAmount: current,
         progress: calculateGoalProgress(current, target),
         monthlyRequirement: calculateMonthlyRequirement(current, target, begin, deadline),
+        history: history.slice().reverse(),
       };
     });
 }
 
 /**
- * Adjusts the current amount of a goal (adds or subtracts).
- *
- * @param {object} payload — { id, amount }
- * @param {BudgetUser} viewer
- * @returns {object} оновлена ціль
+ * @param {Array<Record<string, unknown>>} historyRecords — GoalHistory rows in sheet order
+ * @returns {Record<string, Array<{ id: string, amount: number, user: string, occurredOn: string }>>}
+ *   changes per goal ID, in sheet (oldest first) order
  */
-function adjustGoal(payload, viewer) {
-  const adjustment = Number(payload.amount);
-  if (!isFinite(adjustment) || adjustment === 0 || Math.abs(adjustment) > MAX_GOAL_ADJUSTMENT) {
-    throw new RequestError('Некоректна сума коригування', 'BAD_REQUEST');
+function groupGoalHistoryByGoalId(historyRecords) {
+  const historyByGoalId = {};
+
+  historyRecords.forEach(function (record) {
+    const goalId = String(record[HEADER_GOAL_HISTORY_GOAL_ID] || '').trim();
+    if (goalId === '') return;
+
+    if (!historyByGoalId[goalId]) historyByGoalId[goalId] = [];
+    historyByGoalId[goalId].push({
+      id: String(record[HEADER_ID] || '').trim(),
+      amount: toSignedAmount(record[HEADER_AMOUNT]),
+      user: String(record[HEADER_USER] || '').trim(),
+      occurredOn: toIsoDate(record[HEADER_DATE]),
+    });
+  });
+
+  return historyByGoalId;
+}
+
+/**
+ * @param {Array<{ amount: number }>} changes
+ * @returns {number} sum rounded to kopecks: float addition would leave 0.30000000000000004
+ */
+function sumGoalChangeAmounts(changes) {
+  const total = changes.reduce(function (sum, change) {
+    return sum + change.amount;
+  }, 0);
+  return Math.round(total * 100) / 100;
+}
+
+/**
+ * @param {unknown} rawValue
+ * @returns {number} finite amount rounded to kopecks, 0 if not a number; may be negative
+ */
+function toSignedAmount(rawValue) {
+  const parsedValue = Number(rawValue);
+  if (!isFinite(parsedValue)) return 0;
+  return Math.round(parsedValue * 100) / 100;
+}
+
+/* ── Transactions ───────────────────────────────────────────────────────── */
+
+/*
+ * A Transaction is one action a user asked for: { id, operation }.
+ * The operation says what to do: { type, action, targetId, data }.
+ *
+ * The Transactions sheet is a write-only log: it is consulted only to
+ * recognise a repeated transaction, and is never read to build a view.
+ * Entity sheets (GoalHistory, …) hold the current state.
+ */
+
+/** Operation handlers by type. Each validates, applies and returns the data it applied. */
+const OPERATION_HANDLERS = {
+  expense: applyExpense,
+  goalChange: applyGoalChange,
+};
+
+const OPERATION_ACTIONS = ['add', 'update', 'delete'];
+
+/**
+ * Applies the client's queue in order, under one lock.
+ *
+ * Each transaction gets its own result, so one invalid entry does not hold
+ * back the rest. An infrastructure failure (lock timeout, broken sheet)
+ * fails the whole request instead: the client keeps the queue and retries.
+ *
+ * @param {unknown} rawTransactions
+ * @param {BudgetUser} viewer
+ * @returns {Array<{ id: string, status: string, error?: string }>}
+ *   status: applied | duplicate | rejected
+ * @throws {RequestError}
+ */
+function applyTransactions(rawTransactions, viewer) {
+  if (!Array.isArray(rawTransactions) || rawTransactions.length === 0) {
+    throw new RequestError('Не передано транзакцій', 'BAD_REQUEST');
+  }
+  if (rawTransactions.length > MAX_TRANSACTIONS_PER_REQUEST) {
+    throw new RequestError(
+      'Забагато транзакцій в одному запиті: ' + rawTransactions.length +
+      ', дозволено ' + MAX_TRANSACTIONS_PER_REQUEST,
+      'BAD_REQUEST',
+    );
   }
 
-  const sheet = getRequiredSheet(SHEET_GOALS);
-  const indexByName = readSheetHeader(sheet).index;
-  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
+  const logSheet = getRequiredSheet(SHEET_TRANSACTIONS);
+  const logHeader = readSheetHeader(logSheet);
+  requireSheetColumns(SHEET_TRANSACTIONS, logHeader.index, REQUIRED_TRANSACTION_LOG_COLUMNS);
 
-  // Read-modify-write of the cell: without the lock two simultaneous
-  // adjustments read the same value and one of them is lost.
+  // Validation reads the current state and the write depends on it
+  // (balance check, duplicate check): without the lock two requests
+  // could both pass the check and both write.
   const lock = LockService.getScriptLock();
-  lock.waitLock(GOAL_LOCK_TIMEOUT_MS);
+  lock.waitLock(TRANSACTION_LOCK_TIMEOUT_MS);
 
   try {
-    const rowIndex = findGoalRowIndexById(sheet, payload.id, indexByName);
-    if (rowIndex === -1) {
-      throw new RequestError('Ціль з таким ID не знайдено', 'BAD_REQUEST');
-    }
-
-    const currentAmount = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
-    const newAmount = Math.max(0, Math.round((currentAmount + adjustment) * 100) / 100);
-
-    sheet.getRange(rowIndex, currentColumnIndex + 1).setValue(newAmount);
-    SpreadsheetApp.flush();
-
-    return buildAdjustedGoal(sheet, rowIndex, indexByName, payload.id);
+    return rawTransactions.map(function (rawTransaction) {
+      return applyTransaction(rawTransaction, viewer, logSheet, logHeader);
+    });
   } finally {
     lock.releaseLock();
   }
 }
 
 /**
- * Reads back the adjusted goal row and calculates its progress.
- *
- * @param {Sheet} sheet
- * @param {number} rowIndex — 1-based row number
- * @param {Map<string, number>} indexByName
- * @param {string} id
- * @returns {object} { id, progress, monthlyRequirement }
+ * @param {unknown} rawTransaction
+ * @param {BudgetUser} viewer
+ * @param {Sheet} logSheet
+ * @param {{ row: Array<unknown>, index: Map<string, number> }} logHeader
+ * @returns {{ id: string, status: string, error?: string }}
+ * @throws {RequestError} when the transaction has no usable ID: the client
+ *   matches results by ID, so there is nothing to report back to
  */
-function buildAdjustedGoal(sheet, rowIndex, indexByName, id) {
-  const currentColumnIndex = indexByName.get(HEADER_GOAL_CURRENT_AMOUNT.toLowerCase());
-  const beginColumnIndex = indexByName.get(HEADER_GOAL_BEGIN_DATE.toLowerCase());
-  const updatedCurrent = toPositiveNumber(sheet.getRange(rowIndex, currentColumnIndex + 1).getValue());
-  const target = toPositiveNumber(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_TARGET_AMOUNT.toLowerCase()) + 1).getValue());
-  const begin = toIsoDate(sheet.getRange(rowIndex, beginColumnIndex + 1).getValue());
-  const deadline = toIsoDate(sheet.getRange(rowIndex, indexByName.get(HEADER_GOAL_DEADLINE.toLowerCase()) + 1).getValue());
+function applyTransaction(rawTransaction, viewer, logSheet, logHeader) {
+  const transactionId = parseEntityId(rawTransaction && rawTransaction.id);
+  if (!transactionId) {
+    throw new RequestError('Транзакція без коректного ID', 'BAD_REQUEST');
+  }
 
-  return {
-    id: id,
-    progress: calculateGoalProgress(updatedCurrent, target),
-    monthlyRequirement: calculateMonthlyRequirement(updatedCurrent, target, begin, deadline),
-  };
+  if (isTransactionLogged(logSheet, logHeader.index, transactionId)) {
+    return { id: transactionId, status: 'duplicate' };
+  }
+
+  try {
+    const operation = parseOperation(rawTransaction.operation);
+    const appliedData = OPERATION_HANDLERS[operation.type](operation, viewer);
+
+    // The log row goes last, as a commit marker: if the script dies after
+    // the entity write, the retry is not recognised as a duplicate and is
+    // applied again — harmlessly, because handlers are idempotent by targetId.
+    appendRecordByColumnNames(logSheet, logHeader, [
+      [HEADER_ID, transactionId],
+      [HEADER_USER, viewer.name],
+      [HEADER_RECORDED_AT, new Date()],
+      [HEADER_TRANSACTION_TYPE, operation.type],
+      [HEADER_TRANSACTION_OPERATION, JSON.stringify({
+        action: operation.action,
+        targetId: operation.targetId,
+        data: appliedData,
+      })],
+    ]);
+
+    return { id: transactionId, status: 'applied' };
+  } catch (error) {
+    // Only a rejection of the request itself is "rejected". A broken sheet
+    // or a timeout is not the transaction's fault: it must stay in the queue.
+    if (!(error instanceof RequestError) || error.code !== 'BAD_REQUEST') throw error;
+    return { id: transactionId, status: 'rejected', error: error.displayMessage };
+  }
 }
 
 /**
- * Finds the index of the goal row by its ID.
- *
- * @param {Sheet} sheet
- * @param {string} id
+ * @param {Sheet} logSheet
  * @param {Map<string, number>} indexByName
- * @returns {number} номер рядка або -1
+ * @param {string} transactionId
+ * @returns {boolean} whether this transaction was already applied
  */
-function findGoalRowIndexById(sheet, id, indexByName) {
-  const normalizedId = String(id || '').trim();
-  if (normalizedId === '') return -1;
+function isTransactionLogged(logSheet, indexByName, transactionId) {
+  const lastRowIndex = logSheet.getLastRow();
+  if (lastRowIndex < 2) return false;
 
-  const lastRowIndex = sheet.getLastRow();
-  if (lastRowIndex < 2) return -1;
+  const idColumnNumber = indexByName.get(HEADER_ID.toLowerCase()) + 1;
 
-  const idColumnIndex = indexByName.get(HEADER_GOAL_ID.toLowerCase());
-  const idValues = sheet.getRange(2, idColumnIndex + 1, lastRowIndex - 1, 1).getValues();
+  // TextFinder searches on Google's side: the log only grows, and pulling
+  // the whole ID column into the script on every write would grow with it.
+  return logSheet.getRange(2, idColumnNumber, lastRowIndex - 1, 1)
+    .createTextFinder(transactionId)
+    .matchEntireCell(true)
+    .findNext() !== null;
+}
 
-  for (let i = 0; i < idValues.length; i++) {
-    if (String(idValues[i][0]).trim() === normalizedId) return i + 2;
+/**
+ * @param {unknown} rawValue
+ * @returns {string} trimmed ID or empty string if it does not match ENTITY_ID_PATTERN
+ */
+function parseEntityId(rawValue) {
+  const id = String(rawValue === undefined || rawValue === null ? '' : rawValue).trim();
+  return ENTITY_ID_PATTERN.test(id) ? id : '';
+}
+
+/**
+ * @param {unknown} rawOperation
+ * @returns {{ type: string, action: string, targetId: string, data: object }}
+ * @throws {RequestError}
+ */
+function parseOperation(rawOperation) {
+  if (!rawOperation || typeof rawOperation !== 'object' || Array.isArray(rawOperation)) {
+    throw new RequestError('Не передано операцію', 'BAD_REQUEST');
   }
 
-  return -1;
+  const type = String(rawOperation.type || '').trim();
+  if (!Object.prototype.hasOwnProperty.call(OPERATION_HANDLERS, type)) {
+    throw new RequestError('Невідомий тип операції: ' + (type || '(порожньо)'), 'BAD_REQUEST');
+  }
+
+  const action = String(rawOperation.action || '').trim();
+  if (OPERATION_ACTIONS.indexOf(action) === -1) {
+    throw new RequestError('Невідома дія операції: ' + (action || '(порожньо)'), 'BAD_REQUEST');
+  }
+
+  const targetId = parseEntityId(rawOperation.targetId);
+  if (!targetId) {
+    throw new RequestError('Операція без коректного ID запису', 'BAD_REQUEST');
+  }
+
+  const rawData = rawOperation.data;
+  const data = rawData && typeof rawData === 'object' && !Array.isArray(rawData) ? rawData : {};
+
+  return { type: type, action: action, targetId: targetId, data: data };
+}
+
+/**
+ * Appends a row by column names: the column order in the sheet does not matter.
+ *
+ * @param {Sheet} sheet
+ * @param {{ row: Array<unknown>, index: Map<string, number> }} header
+ * @param {Array<[string, unknown]>} valuesByColumnName
+ * @returns {void}
+ * @throws {Error} if a column is missing: better write nothing than shift values
+ */
+function appendRecordByColumnNames(sheet, header, valuesByColumnName) {
+  const sheetRow = new Array(header.row.length).fill('');
+
+  valuesByColumnName.forEach(function (entry) {
+    const columnIndex = header.index.get(entry[0].toLowerCase());
+    if (columnIndex === undefined) {
+      throw new Error('У аркуші ' + sheet.getName() + ' немає стовпця «' + entry[0] + '». Нічого не записано.');
+    }
+    sheetRow[columnIndex] = entry[1];
+  });
+
+  sheet.appendRow(sheetRow);
+}
+
+/* ── Operation: goalChange ──────────────────────────────────────────────── */
+
+/**
+ * Adds, edits or deletes one GoalHistory row.
+ *
+ * Idempotent by targetId, because a retry may arrive after the row was
+ * written but before the log marked the transaction: adding an existing
+ * row and deleting a missing one both succeed without changes.
+ *
+ * @param {{ action: string, targetId: string, data: object }} operation
+ *   data for add: { goalId, amount, occurredOn? }; for update: { amount, occurredOn? }
+ * @param {BudgetUser} viewer
+ * @returns {object} the data actually applied — it goes to the log
+ * @throws {RequestError}
+ */
+function applyGoalChange(operation, viewer) {
+  const historySheet = getRequiredSheet(SHEET_GOAL_HISTORY);
+  const historyHeader = readSheetHeader(historySheet);
+  requireSheetColumns(SHEET_GOAL_HISTORY, historyHeader.index, REQUIRED_GOAL_HISTORY_COLUMNS);
+
+  const changes = readGoalHistoryRows(historySheet, historyHeader.index);
+  const existing = changes.filter(function (change) {
+    return change.id === operation.targetId;
+  })[0] || null;
+
+  if (operation.action === 'delete') {
+    if (!existing) return {};
+
+    requireActiveGoal(existing.goalId);
+    requireNonNegativeGoalBalance(changes, existing.goalId, existing.id, 0);
+    historySheet.deleteRow(existing.rowIndex);
+    return { goalId: existing.goalId, amount: existing.amount };
+  }
+
+  const amount = parseGoalChangeAmount(operation.data.amount);
+  const occurredOn = parseGoalChangeDate(operation.data.occurredOn);
+
+  if (operation.action === 'add') {
+    if (existing) {
+      return { goalId: existing.goalId, amount: existing.amount, occurredOn: existing.occurredOn };
+    }
+
+    const goalId = parseEntityId(operation.data.goalId);
+    if (!goalId) {
+      throw new RequestError('Не вказано ціль', 'BAD_REQUEST');
+    }
+
+    const addedOn = occurredOn || Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
+
+    requireActiveGoal(goalId);
+    requireNonNegativeGoalBalance(changes, goalId, null, amount);
+    appendRecordByColumnNames(historySheet, historyHeader, [
+      [HEADER_ID, operation.targetId],
+      [HEADER_GOAL_HISTORY_GOAL_ID, goalId],
+      [HEADER_AMOUNT, amount],
+      [HEADER_USER, viewer.name],
+      [HEADER_DATE, addedOn],
+    ]);
+    return { goalId: goalId, amount: amount, occurredOn: addedOn };
+  }
+
+  if (!existing) {
+    throw new RequestError('Запис історії цілі не знайдено', 'BAD_REQUEST');
+  }
+
+  requireActiveGoal(existing.goalId);
+  requireNonNegativeGoalBalance(changes, existing.goalId, existing.id, amount);
+
+  // The author is not overwritten: the money was moved by whoever
+  // entered it, even if someone else corrected the amount later.
+  const updatedOn = occurredOn || existing.occurredOn;
+  historySheet.getRange(existing.rowIndex, historyHeader.index.get(HEADER_AMOUNT.toLowerCase()) + 1).setValue(amount);
+  historySheet.getRange(existing.rowIndex, historyHeader.index.get(HEADER_DATE.toLowerCase()) + 1).setValue(updatedOn);
+  return { goalId: existing.goalId, amount: amount, occurredOn: updatedOn };
+}
+
+/**
+ * @param {Sheet} historySheet
+ * @param {Map<string, number>} indexByName
+ * @returns {Array<{ rowIndex: number, id: string, goalId: string, amount: number, occurredOn: string }>}
+ */
+function readGoalHistoryRows(historySheet, indexByName) {
+  const lastRowIndex = historySheet.getLastRow();
+  if (lastRowIndex < 2) return [];
+
+  const values = historySheet.getRange(2, 1, lastRowIndex - 1, historySheet.getLastColumn()).getValues();
+  const idColumn = indexByName.get(HEADER_ID.toLowerCase());
+  const goalIdColumn = indexByName.get(HEADER_GOAL_HISTORY_GOAL_ID.toLowerCase());
+  const amountColumn = indexByName.get(HEADER_AMOUNT.toLowerCase());
+  const dateColumn = indexByName.get(HEADER_DATE.toLowerCase());
+
+  return values.map(function (row, offset) {
+    return {
+      rowIndex: offset + 2,
+      id: String(row[idColumn]).trim(),
+      goalId: String(row[goalIdColumn]).trim(),
+      amount: toSignedAmount(row[amountColumn]),
+      occurredOn: toIsoDate(row[dateColumn]),
+    };
+  });
+}
+
+/**
+ * @param {unknown} rawValue
+ * @returns {number} non-zero amount rounded to kopecks; negative means a withdrawal
+ * @throws {RequestError}
+ */
+function parseGoalChangeAmount(rawValue) {
+  const amount = typeof rawValue === 'number' ? Math.round(rawValue * 100) / 100 : NaN;
+
+  if (!isFinite(amount) || amount === 0 || Math.abs(amount) > MAX_GOAL_ADJUSTMENT) {
+    throw new RequestError('Некоректна сума зміни цілі', 'BAD_REQUEST');
+  }
+  return amount;
+}
+
+/**
+ * The date is optional for goal changes: an absent one means "today" on add
+ * and "unchanged" on update.
+ *
+ * @param {unknown} rawValue
+ * @returns {string} «YYYY-MM-DD» or empty string when not given
+ * @throws {RequestError} when given but not a date
+ */
+function parseGoalChangeDate(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return '';
+
+  const occurredOn = toIsoDate(rawValue);
+  if (!occurredOn) {
+    throw new RequestError('Не вдалося розпізнати дату: ' + rawValue, 'BAD_REQUEST');
+  }
+  return occurredOn;
+}
+
+/**
+ * @param {string} goalId
+ * @returns {void}
+ * @throws {RequestError} if the goal is missing or inactive: hidden goals
+ *   are not shown, so nobody can see what a change to them would do
+ */
+function requireActiveGoal(goalId) {
+  const goalRecord = readSheetAsRecords(SHEET_GOALS, REQUIRED_GOAL_COLUMNS).filter(function (record) {
+    return String(record[HEADER_GOAL_ID] || '').trim() === goalId;
+  })[0];
+
+  if (!goalRecord || !isTruthyFlag(goalRecord[HEADER_GOAL_ACTIVE])) {
+    throw new RequestError('Ціль не знайдено або вона неактивна', 'BAD_REQUEST');
+  }
+}
+
+/**
+ * @param {Array<{ id: string, goalId: string, amount: number }>} changes — all GoalHistory rows
+ * @param {string} goalId
+ * @param {string | null} replacedChangeId — the row being edited or deleted, excluded from the sum
+ * @param {number} newAmount — amount that takes its place (0 for delete)
+ * @returns {void}
+ * @throws {RequestError} if the goal would end up below zero
+ */
+function requireNonNegativeGoalBalance(changes, goalId, replacedChangeId, newAmount) {
+  const remainingChanges = changes.filter(function (change) {
+    return change.goalId === goalId && change.id !== replacedChangeId;
+  });
+  const balance = Math.round((sumGoalChangeAmounts(remainingChanges) + newAmount) * 100) / 100;
+
+  if (balance < 0) {
+    throw new RequestError('Сума цілі не може стати від’ємною', 'BAD_REQUEST');
+  }
 }

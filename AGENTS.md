@@ -48,11 +48,14 @@ The following terms are the core entities of the system. They are translated to 
 
 | English Entity | Ukrainian UI Name | Description |
 |----------------|-------------------|------------|
-| Transaction     | Операція        | A single record of spending or income. |
-| BudgetSnapshot  | Знімок бюджету | A list of transactions for a specific month. |
+| Expense         | Витрата         | A single record of spending (sheet `Expenses`, snapshot field `expenses`). |
+| Transaction     | Транзакція      | One action a user requested: `{ id, recordedAt, operation }`. Delivered by the transaction queue, logged in sheet `Transactions`. Operation types: `expense`, `goalChange`. |
+| Operation       | —               | What a Transaction does: `{ type, action, targetId, data }`. |
+| BudgetSnapshot  | Знімок бюджету | A list of expenses for a specific month. |
 | Goal             | Ціль           | A target for accumulation (Savings) or spending (Project). |
+| GoalChange       | Зміна цілі     | ± amount for a goal; one row in sheet `GoalHistory`. Operation type `goalChange`. |
 | Limit            | Ліміт          | The monthly spending cap for a category. |
-| PendingEntry    | Запис у черзі   | A transaction waiting to be synced to the server. |
+| PendingEntry    | Запис у черзі   | A Transaction waiting in the queue (`transactionQueue.getPending()`). |
 | AuthProof        | Доказ авторизації | A timestamped SHA-256 hash for secure login. |
 | User             | Користувач      | A person with a login, color, and password. |
 
@@ -60,7 +63,8 @@ Refer to [docs/agent/models.md](docs/agent/models.md) for detailed Core Objects 
 
 ## 4. Core Logic Modules
 - **Authorization**: `SHA-256` hashing for passwords; timestamped `AuthProof` used to bypass CORS limitations. Login attempt limits (5) and lockouts (15 min).
-- **Queue System**: Login-scoped persistent queue in `localStorage`. Entries wait for network availability and sync automatically.
+- **Queue System**: One Login-scoped persistent transaction queue in `localStorage` (`core/transactionQueue.js`) for all user writes. Entries wait for network availability and sync automatically; stores show queued operations on top of server data. Details in `docs/agent/offline.md`.
+- **Transactions**: The server applies each Transaction once (dedupe by ID in the `Transactions` log), validates per transaction, and writes the log row last. Entity sheets hold current state; the log is write-only.
 - **Offline Shell**: Service Worker (`sw.js`), `moneyflow-shell-v1` cache. Network-first strategy with a 3-month history limit.
 - **Budgeting**: Limits are pulled from a separate sheet linked by Category name. Calculations (Progress, Monthly Requirement) are server-side.
 - **Snapshots**: Requested periods are filtered and returned. The `limitPeriod` (current open month) is always prioritized to keep snapshots small.
