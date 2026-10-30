@@ -1,0 +1,6 @@
+.ga-broken-anchor,
+.ga-broken-anchor * {
+  color: var(--text-error) !important;
+  text-decoration: underline wavy var(--text-error);
+  text-decoration-thickness: 1px;
+}

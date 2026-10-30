@@ -16,8 +16,18 @@ local-pass.txt
 .env
 .env.local
 
+# One-off scripts (e.g. data migrations): run once by hand, then deleted.
+tools/temp-*
+
 .DS_Store
 Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+.obsidian/app.json
+.obsidian/appearance.json
+.obsidian/graph.json
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/plugins/*/data.json

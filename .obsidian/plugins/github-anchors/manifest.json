@@ -1,0 +1,9 @@
+{
+  "id": "github-anchors",
+  "name": "GitHub Anchors",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Makes GitHub-style heading anchors like [text](#my-heading) and [text](note.md#my-heading) work in Obsidian.",
+  "author": "ValeriyH",
+  "isDesktopOnly": false
+}
