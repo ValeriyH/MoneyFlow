@@ -4,6 +4,7 @@
   "description": "Сімейний бюджет на Google Таблиці",
   "lang": "uk",
   "dir": "ltr",
+  "id": "MoneyFlow",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
