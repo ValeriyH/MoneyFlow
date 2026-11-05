@@ -26,6 +26,7 @@ export function initOverviewPanel() {
   const expenseTotalValueElement = findById("expenseTotalValue");
   const budgetTotalValueElement = findById("budgetTotalValue");
   const dailyAverageValueElement = findById("dailyAverageValue");
+  const projectionLabelElement = findById("projectionLabel");
   const projectionValueElement = findById("projectionValue");
   const monthOverMonthValueElement = findById("monthOverMonthValue");
 
@@ -110,9 +111,19 @@ export function initOverviewPanel() {
 
   /** @param {ReturnType<typeof buildPeriodSummary>} summary */
   function renderProjection(summary) {
+    // A closed month has no forecast: it would just repeat "Витрати",
+    // so the same slot answers "did we stay within budget" instead.
+    if (!summary.isCurrentPeriod) {
+      renderBudgetExecution(summary);
+      return;
+    }
+
+    projectionLabelElement.textContent = "Прогноз витрат на місяць";
+
     if (summary.expenseTotal === 0) {
       projectionValueElement.textContent = "—";
       delete projectionValueElement.dataset.tone;
+      projectionValueElement.removeAttribute("title");
       return;
     }
 
@@ -131,15 +142,40 @@ export function initOverviewPanel() {
   }
 
   /** @param {ReturnType<typeof buildPeriodSummary>} summary */
+  function renderBudgetExecution(summary) {
+    projectionLabelElement.textContent = "Виконання бюджету";
+
+    if (summary.budgetTotal <= 0) {
+      projectionValueElement.textContent = "—";
+      delete projectionValueElement.dataset.tone;
+      projectionValueElement.removeAttribute("title");
+      return;
+    }
+
+    projectionValueElement.textContent =
+      formatPercentage(summary.expenseTotal / summary.budgetTotal);
+    projectionValueElement.dataset.tone =
+      summary.expenseTotal <= summary.budgetTotal ? "positive" : "negative";
+    projectionValueElement.title =
+      `Витрачено ${formatCurrency(summary.expenseTotal)} із ${formatCurrency(summary.budgetTotal)}`;
+  }
+
+  /** @param {ReturnType<typeof buildPeriodSummary>} summary */
   function renderMonthOverMonth(summary) {
     const expenseChange = describeChangeRate(
-      summary.expenseTotal,
-      summary.previousPeriodExpenseTotal,
+      summary.dailyAverageExpense,
+      summary.previousPeriodDailyAverageExpense,
     );
+
+    // The tooltip shows both averages so the percentage can be checked by eye.
+    monthOverMonthValueElement.title =
+      `Середнє на день: зараз ${formatCurrency(summary.dailyAverageExpense)}, ` +
+      `минулого місяця ${formatCurrency(summary.previousPeriodDailyAverageExpense)}.`;
 
     if (!expenseChange.hasBaseline) {
       monthOverMonthValueElement.textContent = "немає бази для порівняння";
       delete monthOverMonthValueElement.dataset.tone;
+      monthOverMonthValueElement.removeAttribute("title");
       return;
     }
 
@@ -153,10 +189,6 @@ export function initOverviewPanel() {
       `${expenseChange.percent > 0 ? "+" : "−"}${formatPercentage(Math.abs(expenseChange.percent))}`;
 
     monthOverMonthValueElement.dataset.tone = expenseChange.tone;
-    monthOverMonthValueElement.title =
-      expenseChange.tone === "negative"
-        ? "Витрати вище, ніж минулого місяця"
-        : "Витрати нижче, ніж минулого місяця";
   }
 
   /** @param {ReturnType<typeof buildPeriodSummary>} summary */

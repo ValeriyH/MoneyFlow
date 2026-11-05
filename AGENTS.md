@@ -19,7 +19,7 @@ Agents.md and docs/agent/ references are designed to optimize context usage and 
 - **Context Rule**: Only describe what exists. No history, no deleted entities, no rejected options.
 - **Language Rule**: Documentation and Code (comments, variables, functions) are in **English**. UI Text (buttons, labels, error messages, categories) is in **Ukrainian**.
 - **Response Style**: Short and direct. Answer first, provide details only if requested.
-- **Context Optimization**: AGENTS.md is a "map" for the agent. High-level rules, architecture, and glossary go here. Detailed technical logic, formulas, and test scenarios must stay in docs/agent/. README.md is for the human user (instructions) and remains in Ukrainian.
+- **Context Optimization**: AGENTS.md is a "map" for the agent. High-level rules, architecture, and glossary go here. Detailed technical logic, formulas, and test scenarios must stay in docs/agent/. Modules are described here by **why** they exist (one sentence + link); **what** and **how** live only in docs/agent/. The purpose tells where a new feature belongs. README.md is for the human user (instructions) and remains in Ukrainian.
 - **Documentation Updates**: All documentation (README, AGENTS.md, and docs/agent/ files) must be updated whenever new features are implemented or significant changes are made to ensure the "Source of Truth" remains accurate.
 - **No Backward Compatibility**: Breaking changes are allowed and acceptable.
 - **Strong Validation**: Ensure robust validation for all inputs, state transitions, and data types.
@@ -62,12 +62,13 @@ The following terms are the core entities of the system. They are translated to 
 Refer to [docs/agent/models.md](docs/agent/models.md) for detailed Core Objects (Data Models).
 
 ## 4. Core Logic Modules
-- **Authorization**: `SHA-256` hashing for passwords; timestamped `AuthProof` used to bypass CORS limitations. Login attempt limits (5) and lockouts (15 min).
-- **Queue System**: One Login-scoped persistent transaction queue in `localStorage` (`core/transactionQueue.js`) for all user writes. Entries wait for network availability and sync automatically; stores show queued operations on top of server data. Details in `docs/agent/offline.md`.
-- **Transactions**: The server applies each Transaction once (dedupe by ID in the `Transactions` log), validates per transaction, and writes the log row last. Entity sheets hold current state; the log is write-only.
-- **Offline Shell**: Service Worker (`sw.js`), `moneyflow-shell-v1` cache. Network-first strategy with a 3-month history limit.
-- **Budgeting**: Limits are pulled from a separate sheet linked by Category name. Calculations (Progress, Monthly Requirement) are server-side.
-- **Snapshots**: Requested periods are filtered and returned. The `limitPeriod` (current open month) is always prioritized to keep snapshots small.
+- **Authorization**: Keeps the budget private to its users without exposing passwords. → `docs/agent/auth.md`
+- **Queue System**: Lets the user record an expense instantly, without waiting for the server or the network. → `docs/agent/offline.md`
+- **Transactions**: Guarantees that every user action reaches the data exactly once, even with retries and failures. → `docs/agent/offline.md`
+- **Offline Shell**: Keeps the app usable without a connection. → `docs/agent/offline.md`
+- **Budgeting**: Shows whether spending stays within the monthly plan. → `docs/agent/budget.md`
+- **Snapshots**: Delivers the months the user is looking at, while keeping responses small. → `docs/agent/budget.md`
+- **Goals**: Tracks progress toward shared savings and spending targets. → `docs/agent/goals.md`
 
 ## 5. UI & UX Patterns
 - **Form Handling**: Single form for both Add and Edit. Edit mode pre-fills fields without separate logic.

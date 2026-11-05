@@ -70,8 +70,9 @@ export function totalBudgetForPeriod(categories) {
  *   balance: number,
  *   expenseCount: number,
  *   dailyAverageExpense: number,
+ *   isCurrentPeriod: boolean,
  *   projectedExpenseTotal: number,
- *   previousPeriodExpenseTotal: number,
+ *   previousPeriodDailyAverageExpense: number,
  *   categoryBreakdown: Array<object>,
  * }}
  *
@@ -84,9 +85,10 @@ export function buildPeriodSummary(allExpenses, categories, periodKey, reference
   const budgetTotal = totalBudgetForPeriod(categories);
  
   const elapsedDays = Math.max(elapsedDaysInPeriod(periodKey, referenceDate), 1);
-  const previousPeriodTotal = totalAmount(
-    filterExpensesByPeriod(allExpenses, shiftPeriodKey(periodKey, -1)),
-  );
+  // Daily averages make an unfinished month comparable with a whole one:
+  // the previous month is always finished, so it is divided by its full length.
+  const previousPeriodKey = shiftPeriodKey(periodKey, -1);
+  const previousPeriodTotal = totalAmount(filterExpensesByPeriod(allExpenses, previousPeriodKey));
  
   return {
     periodKey,
@@ -95,10 +97,11 @@ export function buildPeriodSummary(allExpenses, categories, periodKey, reference
     balance: budgetTotal - expenseTotal,
     expenseCount: periodExpenses.length,
     dailyAverageExpense: expenseTotal / elapsedDays,
+    isCurrentPeriod: isCurrentPeriod(periodKey, referenceDate),
     projectedExpenseTotal: isCurrentPeriod(periodKey, referenceDate)
       ? (expenseTotal / elapsedDays) * daysInPeriod(periodKey)
       : expenseTotal,
-    previousPeriodExpenseTotal: previousPeriodTotal,
+    previousPeriodDailyAverageExpense: previousPeriodTotal / daysInPeriod(previousPeriodKey),
     remainingDays: remainingDaysInPeriod(periodKey, referenceDate),
     categoryBreakdown: buildCategoryBreakdown(periodExpenses, categories, expenseTotal),
   };
