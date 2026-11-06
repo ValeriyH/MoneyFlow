@@ -814,7 +814,20 @@ select.field__input {
   gap: 2px;
   padding: var(--space-4);
   margin-top: var(--space-4);
-  background: linear-gradient(135deg, var(--color-accent-soft), #f5f8ff);
+  /* Ease-in stops (light share = t²): a plain two-stop gradient looks like
+     a hard edge when the colors are far apart, as in the dark theme. */
+  --balance-gradient-span: calc(100% - var(--balance-gradient-start));
+  background: linear-gradient(
+    135deg,
+    var(--color-accent-soft) var(--balance-gradient-start),
+    color-mix(in srgb, var(--color-accent-soft) 94%, #f5f8ff)
+      calc(var(--balance-gradient-start) + var(--balance-gradient-span) * 0.25),
+    color-mix(in srgb, var(--color-accent-soft) 75%, #f5f8ff)
+      calc(var(--balance-gradient-start) + var(--balance-gradient-span) * 0.5),
+    color-mix(in srgb, var(--color-accent-soft) 44%, #f5f8ff)
+      calc(var(--balance-gradient-start) + var(--balance-gradient-span) * 0.75),
+    #f5f8ff
+  );
   border-radius: var(--radius-md);
 }
 

@@ -14,7 +14,7 @@ import {
   formatPercentage,
 } from "../domain/formatters.js";
 import { buildPeriodSummary } from "../domain/statistics.js";
-import { clearChildren, createElement, findById, setVisibility } from "./dom.js";
+import { clearChildren, createElement, findById, on, setVisibility } from "./dom.js";
 
 /** Number of categories to show in the legend — the rest go into "and other N". */
 const LEGEND_CATEGORY_LIMIT = 6;
@@ -33,6 +33,9 @@ export function initOverviewPanel() {
   const donutBlockElement = findById("donutBlock");
   const donutElement = findById("categoryDonut");
   const legendElement = findById("categoryLegend");
+
+  // Survives re-renders (month switch, sync) so the legend doesn't collapse under the user.
+  let isLegendExpanded = false;
 
   /**
    * @param {Readonly<object>} state
@@ -203,25 +206,45 @@ export function initOverviewPanel() {
     setVisibility(donutBlockElement, true);
     donutElement.style.background = buildDonutGradient(categoryBreakdown);
 
+    renderLegend(categoryBreakdown);
+  }
+
+  /**
+   * Only the legend is re-rendered on toggle: the donut itself always shows every sector.
+   * @param {ReturnType<typeof buildPeriodSummary>["categoryBreakdown"]} categoryBreakdown
+   */
+  function renderLegend(categoryBreakdown) {
     clearChildren(legendElement);
 
-    const leadingCategories = categoryBreakdown.slice(0, LEGEND_CATEGORY_LIMIT);
-    for (const categoryShare of leadingCategories) {
+    const hiddenCategories = categoryBreakdown.slice(LEGEND_CATEGORY_LIMIT);
+    const visibleCategories = isLegendExpanded
+      ? categoryBreakdown
+      : categoryBreakdown.slice(0, LEGEND_CATEGORY_LIMIT);
+
+    for (const categoryShare of visibleCategories) {
       legendElement.append(createLegendItem(categoryShare));
     }
 
-    const hiddenShareTotal = categoryBreakdown
-      .slice(LEGEND_CATEGORY_LIMIT)
-      .reduce((sum, category) => sum + category.share, 0);
+    if (hiddenCategories.length === 0) return;
 
-    if (hiddenShareTotal > 0) {
-      legendElement.append(
-        createElement("li", {
-          className: "legend__item",
-          textContent: `та ще ${categoryBreakdown.length - LEGEND_CATEGORY_LIMIT} · ${formatPercentage(hiddenShareTotal)}`,
-        }),
-      );
-    }
+    const hiddenShareTotal = hiddenCategories.reduce((sum, category) => sum + category.share, 0);
+    const toggleButton = createElement("button", {
+      className: "expand-link",
+      textContent: isLegendExpanded
+        ? "Згорнути"
+        : `та ще ${hiddenCategories.length} · ${formatPercentage(hiddenShareTotal)}`,
+      attributes: { type: "button", "aria-expanded": String(isLegendExpanded) },
+    });
+
+    on(toggleButton, "click", () => {
+      isLegendExpanded = !isLegendExpanded;
+      renderLegend(categoryBreakdown);
+    });
+
+    // Wrapped in <li> so the <ul> contains only list items.
+    legendElement.append(
+      createElement("li", { className: "legend__item", children: [toggleButton] }),
+    );
   }
 
   /**

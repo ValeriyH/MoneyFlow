@@ -34,6 +34,10 @@
   --color-accent: #4d8dff;
   --color-accent-strong: #2f74f5;
   --color-accent-soft: #17233d;
+  /* The light corner is pushed right: under the bottom-left meta text
+     it made the secondary text unreadable. The eased stops keep the text
+     area mostly dark even with this earlier start. */
+  --balance-gradient-start: 45%;
   --color-accent-ring: rgba(77, 141, 255, 0.18);
   --color-on-accent: #08101f;
 

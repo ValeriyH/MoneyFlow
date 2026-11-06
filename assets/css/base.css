@@ -22,6 +22,8 @@
   --color-accent: #2563eb;
   --color-accent-strong: #1d4ed8;
   --color-accent-soft: #e8efff;
+  /* Where the balance block's light corner begins. */
+  --balance-gradient-start: 0%;
   /* Focus border: semi-transparent, so it doesn't have to be picked
      for every background color manually. */
   --color-accent-ring: rgba(37, 99, 235, 0.16);
