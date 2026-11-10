@@ -8,7 +8,8 @@ Before making any changes, the agent should consult the corresponding functional
 |------------------|-----------------|----------------------|
 | **Authentication** | `docs/agent/auth.md` | Hashing, Proof, password |
 | **Budget Engine** | `docs/agent/budget.md` | Limits, Balance, Progress |
-| **Offline & Cache**| `docs/agent/offline.md` | Service Worker, Sync |
+| **Offline & Cache**| `docs/agent/offline.md` | Service Worker, Sync, Shell Update |
+| **Deployment** | `docs/agent/deploy.md` | Build, GitHub Pages, Shell Manifest |
 | **Goals System** | `docs/agent/goals.md` | Progress, Monthly Requirement |
 | **Testing** | `docs/agent/test_scenarios.md`| Mocking, Sandbox, Scenarios |
 
@@ -65,7 +66,8 @@ Refer to [docs/agent/models.md](docs/agent/models.md) for detailed Core Objects 
 - **Authorization**: Keeps the budget private to its users without exposing passwords. → `docs/agent/auth.md`
 - **Queue System**: Lets the user record an expense instantly, without waiting for the server or the network. → `docs/agent/offline.md`
 - **Transactions**: Guarantees that every user action reaches the data exactly once, even with retries and failures. → `docs/agent/offline.md`
-- **Offline Shell**: Keeps the app usable without a connection. → `docs/agent/offline.md`
+- **Offline Shell**: Keeps the app usable and starting instantly without a connection or on a weak one. → `docs/agent/offline.md`
+- **Deployment**: Ships the same site from two builds and stamps the offline shell version. → `docs/agent/deploy.md`
 - **Budgeting**: Shows whether spending stays within the monthly plan. → `docs/agent/budget.md`
 - **Snapshots**: Delivers the months the user is looking at, while keeping responses small. → `docs/agent/budget.md`
 - **Goals**: Tracks progress toward shared savings and spending targets. → `docs/agent/goals.md`
@@ -77,6 +79,6 @@ Refer to [docs/agent/models.md](docs/agent/models.md) for detailed Core Objects 
 - **Theme**: Multi-theme system (`classic` and `solid`). CSS is additive.
 
 ## 6. Deployment & Testing
-- **Deployment Order**: Server/Apps Script first, then Client.
+- **Deployment Order**: Server/Apps Script first, then Client. Builds (GitHub Pages and `deploy.cmd`) → [docs/agent/deploy.md](docs/agent/deploy.md).
 - **Testing**: Tests run without Node (via `new Function` checks and mocked fetch). Detailed scenarios are in [docs/agent/test_scenarios.md](docs/agent/test_scenarios.md).
 - **Localhost**: Run on port 5501 for local dev to avoid conflicts with the owner's server.

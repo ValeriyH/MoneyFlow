@@ -76,6 +76,12 @@ jobs:
           cp index.html app.webmanifest sw.js robots.txt _site/
           cp -r assets _site/
 
+      # Writes the shell version and file list into _site/sw.js. Same script
+      # as tools/deploy.ps1; must run after env.js and the copy above.
+      - name: Build offline shell manifest
+        shell: pwsh
+        run: ./tools/build-shell-manifest.ps1 -SiteDir _site
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

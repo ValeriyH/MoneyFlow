@@ -118,6 +118,13 @@ foreach ($directoryName in $directories) {
     Copy-Item -LiteralPath $source -Destination $targetDir -Recurse
 }
 
+# ── Offline shell manifest ──────────────────────────────────────────────────
+#
+# Must run after env.js is generated and everything is copied: the version
+# covers every shipped file. The same script runs in .github/workflows/pages.yml.
+
+& (Join-Path $PSScriptRoot 'build-shell-manifest.ps1') -SiteDir $targetDir
+
 # ── Verify results ──────────────────────────────────────────────────────────
 #
 

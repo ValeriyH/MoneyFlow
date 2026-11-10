@@ -1,15 +1,22 @@
 # Offline & Service Worker
 
 ## Service Worker Logic
-- `sw.js` is located in the root to ensure it covers the entire site.
-- Registered via `registerOfflineShell` in `main.js`.
-- Uses Network-first strategy
-- If the network returns a non-OK response (e.g., 5xx, or offline), the Service Worker serves the version from the `moneyflow-shell-v1` cache.
+- `sw.js` is located in the root to ensure it covers the entire site. Registered via `registerOfflineShell` in `main.js`.
+- Strategy: **versioned precache, cache first**. Reason: on a weak network a network-first `fetch` hangs instead of failing, and the app stayed on the splash screen.
+- Source `sw.js` is a template: `SHELL_VERSION = "dev"`, `SHELL_FILES = []`. With an empty list the worker intercepts nothing (local dev always gets fresh files). The build fills both lines in the deployed copy only — see [deploy.md](deploy.md).
+- **Install**: downloads every `SHELL_FILES` entry into cache `moneyflow-shell-<version>` with `cache: "reload"` (bypasses HTTP/CDN cache). `addAll` is atomic: one failed file fails the install, the previous version keeps serving.
+- **Activate**: deletes every other `moneyflow-shell-*` cache, then `clients.claim()`.
+- **Fetch** (built worker only): same-origin GET, except `sw.js` itself. Cache match (`ignoreSearch`); a navigation to the scope root or `index.html` falls back to cached `index.html`; a miss goes to the network, offline miss → 503 text.
+- Requests to Apps Script (other origin, POST) are never intercepted.
 
-## Caching Rules
-- The cache includes the main shell (HTML, JS, CSS, Icons).
-- A specific issue: If `sw.js` is in a subfolder, the scope is broken. It **must** be in the root.
-- Cache is ignored for the `/apps-script/` path.
+## Shell Updates
+- The browser installs a new worker only when `sw.js` bytes change; the version hash covers the template and every shell file, so any shipped change does it.
+- The new worker waits (no `skipWaiting` on install): one page never mixes modules of two versions.
+- `main.js` detects a waiting worker (`registration.waiting` or `updatefound` → `installed`) while a controller exists and shows `ui/updateBanner.js` («Доступна нова версія» / «Оновити»).
+- «Оновити» → `postMessage({ type: "SKIP_WAITING" })` → `controllerchange` → `location.reload()`. Reload happens only after this consent (the first install also fires `controllerchange`).
+- Ignored banner: the new version activates once every app window is closed.
+- `registration.update()` runs on every return to the tab (installed PWAs stay open for days).
+- Reload during a running flush is safe: the queue is in `localStorage`, a lost response is resent and answered `duplicate`.
 
 ## Snapshot Caching
 - `moneyflow.cached-snapshot` in `localStorage` stores history for currently open months.
@@ -46,4 +53,5 @@ Also flushed on every expense / goal action and on opening the Goals tab.
 - `moneyflow.cached-goals` holds the last goals from the server; cleared on logout.
 
 ## Known Issues
-- Network errors (like "Page not found" or "Gateway timeout") return 5xx codes. These must be caught by checking `response.ok` rather than just catching `fetch` errors, otherwise the app might show the "error page" instead of the cached content.
+- First opening on a device still needs the network: the shell is precached only after the worker installs.
+- Fetch rule still applies to API calls: 5xx errors (proxy, gateway timeout) must be detected via `response.ok`, not only via a thrown `fetch`.

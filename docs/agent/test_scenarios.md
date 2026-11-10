@@ -16,6 +16,14 @@ These scenarios are designed to be verified during development and testing to en
 9. **Duplicate Prevention**: Verify that resending a transaction (lost response) returns `duplicate` and writes no second row.
 10. **Sync Retry**: Verify that clicking the sync indicator "kicks" a stuck sync process.
  
+## Offline Shell
+11. **Weak Network Start**: With a built shell installed, DevTools throttling at ~10 s latency → the app opens from cache without waiting.
+12. **Update Banner**: Deploy a change → on the next open (or tab return) «Доступна нова версія» appears; «Оновити» reloads into the new version, the queue survives.
+13. **No Mixed Versions**: Ignoring the banner keeps the old version working; no module of the new version is served to that page.
+14. **First Install**: The first visit installs the worker without the banner and without a reload.
+15. **Dev Template**: The unbuilt `sw.js` (local `start.cmd`) intercepts nothing; edits show on reload.
+16. **Build Guard**: Running `build-shell-manifest.ps1` twice on the same folder fails.
+
 ## Goals & Transactions
 31. **Duplicate Transaction**: Sending the same transaction ID twice returns `duplicate`; one `GoalHistory` row, one log row.
 32. **Offline Goal Change**: A change made offline shows in the history as pending, is sent on reconnect, and the balance updates.

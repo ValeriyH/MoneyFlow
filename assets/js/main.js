@@ -36,6 +36,7 @@ import { initRegistrationPanel } from "./ui/registrationPanel.js";
 import { initSyncIndicator } from "./ui/syncIndicator.js";
 import { initExpenseList } from "./ui/expenseList.js";
 import { showToast } from "./ui/toast.js";
+import { initUpdateBanner } from "./ui/updateBanner.js";
 import { initUserMenu } from "./ui/userMenu.js";
 import { initViewSwitcher } from "./ui/viewSwitcher.js";
 import { showGoalsTab } from "./ui/goals.js";
@@ -162,11 +163,58 @@ if (!isEnvironmentConfigured()) {
 function registerOfflineShell() {
   if (!("serviceWorker" in navigator)) return;
   if (!window.isSecureContext) return;
- 
+
+  /** @type {ServiceWorker | null} */
+  let waitingWorker = null;
+  // The first install also fires controllerchange (clients.claim); only a
+  // user-accepted update may reload the page.
+  let isUpdateAccepted = false;
+
+  const updateBanner = initUpdateBanner({
+    onApply: () => {
+      if (!waitingWorker) return;
+      isUpdateAccepted = true;
+      waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    },
+  });
+
+  const offerUpdate = (worker) => {
+    // Without a controller this is the first install, not an update.
+    if (!navigator.serviceWorker.controller) return;
+    waitingWorker = worker;
+    updateBanner.show();
+  };
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (isUpdateAccepted) window.location.reload();
+  });
+
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch((error) => {
-      console.warn("[MoneyFlow] Service worker was not registered:", error);
-    });
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then((registration) => {
+        if (registration.waiting) offerUpdate(registration.waiting);
+
+        registration.addEventListener("updatefound", () => {
+          const installingWorker = registration.installing;
+          if (!installingWorker) return;
+          installingWorker.addEventListener("statechange", () => {
+            if (installingWorker.state === "installed") offerUpdate(installingWorker);
+          });
+        });
+
+        // An installed PWA can stay open for days; the browser checks for a
+        // new sw.js only on navigation, so check again on every return.
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState !== "visible") return;
+          registration.update().catch(() => {
+            // Offline or weak network: the next return will try again.
+          });
+        });
+      })
+      .catch((error) => {
+        console.warn("[MoneyFlow] Service worker was not registered:", error);
+      });
   });
 }
  

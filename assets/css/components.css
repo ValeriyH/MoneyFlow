@@ -1219,6 +1219,36 @@ select.field__input {
 .toast[data-tone="error"]   { background: var(--color-expense); }
 .toast[data-tone="warning"] { background: var(--color-warning); }
 
+/* ── Update banner ───────────────────────────────────────────────────────
+   Top of the screen: the bottom belongs to toasts, and the banner stays
+   until the user acts on it. */
+
+.update-banner {
+  position: fixed;
+  top: calc(var(--space-3) + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: min(420px, calc(100vw - var(--space-4) * 2));
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-inverse);
+  background: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+  z-index: 60;
+  animation: toast-in var(--motion-base);
+}
+
+.update-banner__button {
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }

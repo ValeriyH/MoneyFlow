@@ -1,18 +1,39 @@
 /**
  * sw.js — MoneyFlow offline shell.
  *
- * Role is narrow and deliberate: **network first, cache fallback**. That is, if a network is available, we give what arrived and simultaneously update the cache; without a network, we give the last known.
- * Why not "cache first"? There is no build system in the project, so file names do not have a content hash, and "cache first" would mean that a fix takes a week to reach the family until someone manually deletes the app. Network first kills this entire class of problems at the cost of one request, and the app is already waiting for the network for the snapshot.
+ * Strategy: **versioned precache, cache first**. The build (tools/build-shell-manifest.ps1)
+ * writes the shell version and the full file list into the deployed copy of this file.
+ * Why cache first: on a weak network a network-first fetch does not fail, it hangs, and the
+ * app stayed on the splash screen until the browser gave up. The shell now starts from the
+ * cache instantly, whatever the network.
+ * Why versioned: file names carry no content hash, so per-file caching could mix old and new
+ * modules after a deploy. A new version is downloaded as a whole set into its own cache and
+ * switched on at once; any change of a shell file changes this file, so the browser notices it.
  *
- * What is not cached: POST requests to Apps Script (which go to another domain anyway), everything external, and uncacheable responses.
+ * Source (unbuilt) copy: SHELL_FILES is empty → the worker does not intercept requests, so local
+ * development always gets fresh files from disk.
  *
+ * What is not cached: POST requests to Apps Script (another domain anyway), everything external.
  */
 
-const CACHE_NAME = "moneyflow-shell-v1";
+// Both lines are replaced by tools/build-shell-manifest.ps1; keep them exactly as they are.
+const SHELL_VERSION = "dev";
+const SHELL_FILES = [];
+
+const CACHE_PREFIX = "moneyflow-shell-";
+const CACHE_NAME = `${CACHE_PREFIX}${SHELL_VERSION}`;
+const IS_PRECACHE_BUILD = SHELL_FILES.length > 0;
+const NAVIGATION_FALLBACK = "index.html";
 
 self.addEventListener("install", (event) => {
-  // Do not pre-transfer the shell: it will load on the first opening anyway. The file list in the code is a list that is often forgotten to update, and without it, the cache automatically collects everything that is actually needed.
-  event.waitUntil(self.skipWaiting());
+  if (!IS_PRECACHE_BUILD) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
+
+  // No skipWaiting here: the open page keeps its version until the user accepts the update
+  // (message SKIP_WAITING), so modules of two versions never meet in one page.
+  event.waitUntil(precacheShell());
 });
 
 self.addEventListener("activate", (event) => {
@@ -22,7 +43,7 @@ self.addEventListener("activate", (event) => {
       .then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter((cacheName) => cacheName !== CACHE_NAME)
+            .filter((cacheName) => cacheName.startsWith(CACHE_PREFIX) && cacheName !== CACHE_NAME)
             .map((cacheName) => caches.delete(cacheName)),
         ),
       )
@@ -30,52 +51,77 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  const request = event.request;
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
+});
 
+self.addEventListener("fetch", (event) => {
+  if (!IS_PRECACHE_BUILD) return;
+
+  const request = event.request;
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // The worker's script itself is not from cache: otherwise, a new version of sw.js would never reach the browser.
+  // The worker's script itself is never served from cache: otherwise a new version would never arrive.
   if (url.pathname.endsWith("/sw.js")) return;
 
-  event.respondWith(networkFirst(request));
+  event.respondWith(cacheFirst(request, url));
 });
 
 /**
- * Network first, cache fallback.
+ * Downloads the whole shell into this version's cache.
+ * `cache: "reload"` bypasses the HTTP cache: a CDN copy of an older file must not be stored
+ * under the new version. `addAll` is atomic — one failed file fails the install, and the
+ * previous version keeps serving until the next update check.
+ *
+ * @returns {Promise<void>}
+ */
+async function precacheShell() {
+  const cache = await caches.open(CACHE_NAME);
+  const requests = SHELL_FILES.map(
+    (path) => new Request(new URL(path, self.registration.scope), { cache: "reload" }),
+  );
+  await cache.addAll(requests);
+}
+
+/**
+ * Cache first, network only for what the shell does not contain.
  *
  * @param {Request} request
+ * @param {URL} url
  * @returns {Promise<Response>}
  */
-async function networkFirst(request) {
+async function cacheFirst(request, url) {
   const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request, { ignoreSearch: true });
 
+  // ignoreSearch: a query (tracker, start_url variant) does not make it a different shell file.
+  let cached = await cache.match(request, { ignoreSearch: true });
+
+  // The app is opened as "./" as often as "./index.html"; both are the same page.
+  if (!cached && request.mode === "navigate" && isShellPageUrl(url)) {
+    cached = await cache.match(new URL(NAVIGATION_FALLBACK, self.registration.scope));
+  }
+
+  if (cached) return cached;
+
+  // The browser may evict the cache under storage pressure; then the network is the only source.
   try {
-    const response = await fetch(request);
-
-    // A failed HTTP response is the same as a break for offline_ : 502 from a proxy, a 'portal caught' page, CDN failure. fetch does not throw here but returns 5xx - and without this check, the user would see an error page instead of their budget.
-    if (!response.ok) {
-      if (cached) return cached;
-      return response;
-    }
-
-    if (response.type === "basic") {
-      await cache.put(request, response.clone());
-    }
-
-    return response;
+    return await fetch(request);
   } catch (error) {
-    // ignoreSearch: a query might be present in the request that is not in the cache (version check, redirect from a tracker). This is the same file, so the mark after "?" doesn't matter for offline.
-    if (cached) return cached;
-
-    // Offline, and this file is not yet in the cache - first opening without a network. We say this directly because a blank page would look like a broken app.
-    return new Response("Offline, and this page is not yet in the cache.", {
+    return new Response("Offline, and this file is not in the offline shell.", {
       status: 503,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
+}
+
+/**
+ * @param {URL} url
+ * @returns {boolean} whether the URL addresses the app page itself (scope root or index.html)
+ */
+function isShellPageUrl(url) {
+  const scopePath = new URL(self.registration.scope).pathname;
+  return url.pathname === scopePath || url.pathname === `${scopePath}${NAVIGATION_FALLBACK}`;
 }
